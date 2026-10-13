@@ -36,13 +36,21 @@ for s in $SRCS; do
     if [ ${#pids[@]} -ge 10 ]; then wait "${pids[0]}" || fail=1; pids=("${pids[@]:1}"); fi
   fi
 done
-for p in "${pids[@]}"; do wait "$p" || fail=1; done
+for p in ${pids[@]+"${pids[@]}"}; do wait "$p" || fail=1; done
 if [ $fail = 1 ]; then
   for l in "$OBJ"/*.log; do [ -s "$l" ] && grep -q 'error:' "$l" && { echo "== $l"; grep -m 20 'error:' "$l"; }; done
   exit 1
 fi
 
+# kmod_info (what Xcode generates for kext targets) must keep C symbol names.
+xcrun clang -arch x86_64 -mmacosx-version-min=13.0 -mkernel -nostdinc -isystem "$MKSDK/Headers" \
+  -DKERNEL -DQWZMAC_VERSION=\"$VERSION\" -x c -c kmod/kmod_info.c -o "$OBJ/kmod_info.o"
+
 xcrun clang++ -arch x86_64 -mmacosx-version-min=13.0 -fapple-kext -nostdlib -Xlinker -kext -Xlinker -no_data_const \
   -L"$MKSDK/Library/x86_64" -lkmodc++ -lkmod -lcc_kext "$OBJ"/*.o -o "$KEXT/Contents/MacOS/QwzMac"
+# Without these the kernel and OpenCore reject the kext ("Invalid Parameter").
+for sym in _kmod_info __start __stop __realmain; do
+  nm "$KEXT/Contents/MacOS/QwzMac" | grep -q " $sym\$" || { echo "STOP: $sym missing from the kext"; exit 1; }
+done
 sed "s/@VERSION@/$VERSION/g" Info.plist > "$KEXT/Contents/Info.plist"
 echo "QwzMac $VERSION $(shasum -a 256 "$KEXT/Contents/MacOS/QwzMac" | cut -c1-8) $(stat -f %z "$KEXT/Contents/MacOS/QwzMac") B -> $KEXT"
