@@ -71,7 +71,8 @@ A kernel driver bug panics the whole machine, and this one has not run on hardwa
    sudo nvram boot-args="$(nvram -p | awk -F'\t' '/^boot-args/{print $2}') -qwzoff"
    ```
 
-3. Do not install alongside **itlwm**: both register a class named `itlwm` (that is how HeliPort finds the driver).
+3. **Don't let the Mac sleep** during the first tests: sleep/wake is not wired to the driver yet.
+4. Do not install alongside **itlwm**: both register a class named `itlwm` (that is how HeliPort finds the driver).
 
 ### Install
 
