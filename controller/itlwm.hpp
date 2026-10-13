@@ -92,6 +92,11 @@ public:
     void unregistPM();
     
     bool createMediumTables(const IONetworkMedium **primary);
+    /* QwzMac: deferred bring-up, see start() */
+    static void startThreadCall(thread_call_param_t owner, thread_call_param_t);
+    bool finishStart();
+    thread_call_t fStartCall;
+    volatile bool fStopping;
     
 public:
     IOInterruptEventSource* fInterrupt;

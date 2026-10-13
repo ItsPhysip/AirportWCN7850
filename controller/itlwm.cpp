@@ -32,6 +32,9 @@ IOCommandGate *_fCommandGate;
 
 bool itlwm::init(OSDictionary *properties)
 {
+    fStartCall = NULL;
+    fStopping = false;
+    fNetIf = NULL;
     return super::init(properties);
 }
 
@@ -88,9 +91,11 @@ IOService* itlwm::probe(IOService *provider, SInt32 *score)
             pciMsiXClearAndSet(device, msixCap, PCI_MSIX_FLAGS_ENABLE, 0);
         }
         device->findPCICapability(PCI_CAP_ID_MSI, &msiCap);
-        if (msiCap) {
-            pciMsiSetEnable(device, msiCap, 1);
-        }
+        /*
+         * QwzMac: leave MSI disabled here. IOPCIFamily programs the address
+         * and enables MSI when the interrupt is registered; enabling it now
+         * would let the card signal to an unprogrammed address.
+         */
         if (!msiCap && !msixCap) {
             XYLog("%s No MSI cap\n", __FUNCTION__);
             fHalService->release();
@@ -336,33 +341,57 @@ bool itlwm::start(IOService *provider)
     if (PE_parse_boot_argn("-noht40", &boot_value, sizeof(boot_value)))
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOHT40;
     
-    if (!fHalService->attach(pciNub)) {
-        XYLog("attach fail\n");
+    /*
+     * QwzMac: the firmware boot takes seconds and macOS waits for start()
+     * before it carries on booting, so the rest of the bring-up runs on a
+     * thread call. qwz_delay=<seconds> postpones it, leaving time after
+     * login to set -qwzoff if bring-up crashes.
+     */
+    uint32_t delay = 0;
+    uint64_t deadline;
+    PE_parse_boot_argn("qwz_delay", &delay, sizeof(delay));
+    fStartCall = thread_call_allocate(&itlwm::startThreadCall, this);
+    if (fStartCall == NULL) {
         super::stop(pciNub);
         releaseAll();
+        return false;
+    }
+    IOLog("qwz: bring-up scheduled in %u s\n", delay);
+    retain();
+    clock_interval_to_deadline(delay, kSecondScale, &deadline);
+    thread_call_enter_delayed(fStartCall, deadline);
+    return true;
+}
+
+void itlwm::startThreadCall(thread_call_param_t owner, thread_call_param_t)
+{
+    itlwm *that = (itlwm *)owner;
+
+    if (!that->fStopping && !that->finishStart())
+        IOLog("qwz: bring-up failed; the driver stays idle\n");
+    that->release();
+}
+
+bool itlwm::finishStart()
+{
+    if (!fHalService->attach(pciNub)) {
+        XYLog("attach fail\n");
         return false;
     }
     if (!attachInterface((IONetworkInterface **)&fNetIf, true)) {
         XYLog("attach to interface fail\n");
         fHalService->detach(pciNub);
-        super::stop(pciNub);
-        releaseAll();
+        fNetIf = NULL;
         return false;
     }
     fWatchdogWorkLoop = IOWorkLoop::workLoop();
     if (fWatchdogWorkLoop == NULL) {
         XYLog("init watchdog workloop fail\n");
-        fHalService->detach(pciNub);
-        super::stop(pciNub);
-        releaseAll();
         return false;
     }
     watchdogTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &itlwm::watchdogAction));
     if (!watchdogTimer) {
         XYLog("init watchdog fail\n");
-        fHalService->detach(pciNub);
-        super::stop(pciNub);
-        releaseAll();
         return false;
     }
     fWatchdogWorkLoop->addEventSource(watchdogTimer);
@@ -462,13 +491,25 @@ IOReturn itlwm::selectMedium(const IONetworkMedium *medium) {
 void itlwm::stop(IOService *provider)
 {
     XYLog("%s\n", __FUNCTION__);
-    struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
+    fStopping = true;
+    if (fStartCall != NULL) {
+        /* A bring-up that has not run yet must not run after stop. */
+        if (thread_call_cancel_wait(fStartCall))
+            release();
+        thread_call_free(fStartCall);
+        fStartCall = NULL;
+    }
     super::stop(provider);
-    setLinkStatus(kIONetworkLinkValid);
-    fHalService->detach(pciNub);
-    ether_ifdetach(ifp);
-    detachInterface(fNetIf, true);
-    OSSafeReleaseNULL(fNetIf);
+    if (fNetIf != NULL) {
+        struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
+        setLinkStatus(kIONetworkLinkValid);
+        fHalService->detach(pciNub);
+        ether_ifdetach(ifp);
+        detachInterface(fNetIf, true);
+        OSSafeReleaseNULL(fNetIf);
+    } else if (fHalService != NULL) {
+        fHalService->detach(pciNub);
+    }
     releaseAll();
 }
 

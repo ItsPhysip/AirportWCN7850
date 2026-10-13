@@ -104,16 +104,6 @@ ItlQwz::attach(IOPCIDevice *device)
 	PE_parse_boot_argn("qwz_debug", &qwz_debug, sizeof(qwz_debug));
 	QWZLOG("debug build, qwz_debug=0x%x", qwz_debug);
 #endif
-	/*
-	 * qwz_delay=<seconds> waits before touching the hardware, so a crash
-	 * during bring-up leaves time after login to set -qwzoff.
-	 */
-	uint32_t delay = 0;
-	if (PE_parse_boot_argn("qwz_delay", &delay, sizeof(delay)) && delay > 0) {
-		QWZLOG("waiting %u s before bring-up (qwz_delay)", delay);
-		IOSleep(delay * 1000);
-	}
-
 	qwz_compat_init();
 	qwz_hal_gate = getMainCommandGate();
 	qwz_compat_set_gate(qwz_hal_gate);
