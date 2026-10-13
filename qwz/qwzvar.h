@@ -1087,7 +1087,7 @@ struct ath12k_dp_tx_bank_profile {
 };
 
 struct qwz_hp_update_timer {
-	struct timeout timer;
+	qwz_timeout_t timer;
 	int started;
 	int init;
 	uint32_t tx_num;
@@ -2016,7 +2016,7 @@ struct qwz_softc {
 		int started;
 		int completed;
 		int on_channel;
-		struct timeout timeout;
+		qwz_timeout_t timeout;
 		enum ath12k_scan_state state;
 		int vdev_id;
 		int is_roc;
@@ -2124,7 +2124,7 @@ struct qwz_softc {
 
 	struct qwz_dmamem		*m3_mem;
 
-	struct timeout			 mon_reap_timer;
+	qwz_timeout_t			 mon_reap_timer;
 #define ATH12K_MON_TIMER_INTERVAL	10
 
 	/* Provided by attachment driver: */

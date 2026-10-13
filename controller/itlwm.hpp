@@ -12,7 +12,6 @@
 * GNU General Public License for more details.
 */
 #include <compat.h>
-#include "itlhdr.h"
 #include <linux/kernel.h>
 
 #include <IOKit/network/IOEthernetController.h>
@@ -26,9 +25,7 @@
 #include <libkern/c++/OSMetaClass.h>
 #include <IOKit/IOFilterInterruptEventSource.h>
 
-#include "ItlIwm.hpp"
-#include "ItlIwx.hpp"
-#include "ItlIwn.hpp"
+#include "ItlQwz.hpp"	/* QwzMac: the only HAL */
 
 enum
 {

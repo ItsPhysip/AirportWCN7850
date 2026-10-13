@@ -50,32 +50,7 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "bpfilter.h"
-
-#include <sys/param.h>
-#include <sys/mbuf.h>
-#include <sys/lock.h>
-#include <sys/socket.h>
-#include <sys/systm.h>
-#include <sys/malloc.h>
-#include <sys/device.h>
-#include <sys/endian.h>
-
-#include <machine/bus.h>
-#include <machine/intr.h>
-
-#include <net/if.h>
-#include <net/if_media.h>
-
-#include <netinet/in.h>
-#include <netinet/if_ether.h>
-
-#include <net80211/ieee80211_var.h>
-#include <net80211/ieee80211_radiotap.h>
-
-#include <dev/pci/pcireg.h>
-#include <dev/pci/pcivar.h>
-#include <dev/pci/pcidevs.h>
+#include "qwz_compat.h"	/* macOS: replaces the OpenBSD kernel headers */
 
 /* XXX linux porting goo */
 #ifdef __LP64__
@@ -93,8 +68,8 @@
 
 /* #define QWZ_DEBUG */
 
-#include <dev/ic/qwzreg.h>
-#include <dev/ic/qwzvar.h>
+#include "qwzreg.h"
+#include "qwzvar.h"
 
 #ifdef QWZ_DEBUG 
 /* Headers needed for RDDM dump */
@@ -489,6 +464,7 @@ static const struct qwz_pci_ops qwz_pci_ops_wcn7850 = {
 	.alloc_xfer_rings = qwz_pci_alloc_xfer_rings_wcn7850,
 };
 
+#ifndef __APPLE__	/* macOS: IOKit matches the device from Info.plist */
 const struct cfattach qwz_pci_ca = {
 	sizeof(struct qwz_pci_softc),
 	qwz_pci_match,
@@ -500,12 +476,15 @@ const struct cfattach qwz_pci_ca = {
 static const struct pci_matchid qwz_pci_devices[] = {
 	{ PCI_VENDOR_QUALCOMM, PCI_PRODUCT_QUALCOMM_WCN7850 }
 };
+#endif
 
+#ifndef __APPLE__
 int
 qwz_pci_match(struct device *parent, void *match, void *aux)
 {
 	return pci_matchbyid(aux, qwz_pci_devices, nitems(qwz_pci_devices));
 }
+#endif
 
 void
 qwz_pci_init_qmi_ce_config(struct qwz_softc *sc)
@@ -680,7 +659,7 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &ic->ic_if;
 	uint32_t soc_hw_version_major, soc_hw_version_minor;
-	struct pci_attach_args *pa = aux;
+	struct pci_attach_args *pa = (struct pci_attach_args *)(aux);
 	pci_intr_handle_t ih;
 	pcireg_t memtype, reg;
 	const char *intrstr;
@@ -958,7 +937,7 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	/* Set device capabilities. */
 	ic->ic_caps =
 	    IEEE80211_C_QOS | IEEE80211_C_TX_AMPDU | /* A-MPDU */
-	    IEEE80211_C_ADDBA_OFFLOAD | /* device sends ADDBA/DELBA frames */
+	    IEEE80211_C_TX_AMPDU_SETUP_IN_HW | /* macOS: itl80211's name for ADDBA_OFFLOAD */
 	    IEEE80211_C_WEP |		/* WEP */
 	    IEEE80211_C_RSN |		/* WPA/RSN */
 	    IEEE80211_C_SCANALL |	/* device scans all channels at once */
@@ -994,8 +973,8 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	ifp->if_watchdog = qwz_watchdog;
 	memcpy(ifp->if_xname, sc->sc_dev.dv_xname, IFNAMSIZ);
 	if_attach(ifp);
-	ieee80211_ifattach(ifp);
-	ieee80211_media_init(ifp, ieee80211_media_change, ieee80211_media_status);
+	ieee80211_ifattach(ifp, pa->pa_controller);	/* macOS: itl80211 signatures */
+	ieee80211_media_init(ifp);
 
 	ic->ic_node_alloc = qwz_node_alloc;
 
@@ -1103,7 +1082,7 @@ qwz_pci_detach(struct device *self, int flags)
 void
 qwz_pci_attach_hook(struct device *self)
 {
-	struct qwz_softc *sc = (void *)self;
+	struct qwz_softc *sc = (struct qwz_softc *)((void *)self);
 	int s = splnet();
 
 	qwz_attach(sc);
@@ -1173,13 +1152,13 @@ qwz_pci_alloc_xfer_ring(struct qwz_softc *sc, struct qwz_pci_xfer_ring *ring,
 			}
 
 			MCLGETL(m, M_DONTWAIT, QWZ_PCI_XFER_MAX_DATA_SIZE);
-			if ((m->m_flags & M_EXT) == 0) {
+			if ((M_FLAGS(m) & M_EXT) == 0) {
 				m_freem(m);
 				err = ENOBUFS;
 				goto fail;
 			}
 
-			m->m_len = m->m_pkthdr.len = QWZ_PCI_XFER_MAX_DATA_SIZE;
+			M_SETLEN(m, QWZ_PCI_XFER_MAX_DATA_SIZE);
 			err = bus_dmamap_load_mbuf(sc->sc_dmat, xfer->map,
 			    m, BUS_DMA_READ | BUS_DMA_NOWAIT);
 			if (err) {
@@ -1559,7 +1538,7 @@ qwz_pcic_config_irq(struct qwz_softc *sc, struct pci_attach_args *pa)
 	if (!test_bit(ATH12K_FLAG_MULTI_MSI_VECTORS, sc->sc_flags))
 		return 0;
 
-	ret = qwz_pcic_get_user_msi_vector(sc, "CE", &msi_data_count,
+	ret = qwz_pcic_get_user_msi_vector(sc, "CE", (int *)&msi_data_count,
 	    &msi_data_start, &msi_irq_start);
 	if (ret)
 		return ret;
@@ -2582,7 +2561,7 @@ qwz_pci_cmd_ring_get_elem(struct qwz_pci_cmd_ring *ring, uint64_t ptr)
 	if (offset >= ring->size)
 		return NULL;
 
-	return QWZ_DMA_KVA(ring->dmamem) + offset;
+	return (uint8_t *)QWZ_DMA_KVA(ring->dmamem) + offset;
 }
 
 int
@@ -2627,7 +2606,7 @@ qwz_mhi_send_cmd(struct qwz_pci_softc *psc, uint32_t cmd, uint32_t chan)
 		return 1;
 	}
 
-	e = qwz_pci_cmd_ring_get_elem(ring, ring->wp);
+	e = (struct qwz_mhi_ring_element *)(qwz_pci_cmd_ring_get_elem(ring, ring->wp));
 	if (e == NULL)
 		return 1;
 
@@ -2653,7 +2632,7 @@ qwz_pci_xfer_ring_get_elem(struct qwz_pci_xfer_ring *ring, uint64_t wp)
 	if (offset >= ring->size)
 		return NULL;
 
-	return addr + offset;
+	return ((uint8_t *)addr) + offset;
 }
 
 struct qwz_xfer_data *
@@ -2686,14 +2665,14 @@ qwz_mhi_submit_xfer(struct qwz_softc *sc, struct mbuf *m)
 	if (ring->queued >= ring->num_elements)
 		return 1;
 
-	if (m->m_pkthdr.len > QWZ_PCI_XFER_MAX_DATA_SIZE) {
+	if (M_PKTLEN(m) > QWZ_PCI_XFER_MAX_DATA_SIZE) {
 		/* TODO: chunk xfers */
-		printf("%s: xfer too large: %d bytes\n", __func__, m->m_pkthdr.len);
+		printf("%s: xfer too large: %d bytes\n", __func__, M_PKTLEN(m));
 		return 1;
 
 	}
 
-	e = qwz_pci_xfer_ring_get_elem(ring, ring->wp);
+	e = (struct qwz_mhi_ring_element *)(qwz_pci_xfer_ring_get_elem(ring, ring->wp));
 	if (e == NULL)
 		return 1;
 
@@ -2721,14 +2700,14 @@ qwz_mhi_submit_xfer(struct qwz_softc *sc, struct mbuf *m)
 		}
 	}
 
-	bus_dmamap_sync(sc->sc_dmat, xfer->map, 0, m->m_pkthdr.len,
+	bus_dmamap_sync(sc->sc_dmat, xfer->map, 0, M_PKTLEN(m),
 	    BUS_DMASYNC_PREWRITE);
 
 	xfer->m = m;
 	paddr = xfer->map->dm_segs[0].ds_addr;
 
 	e->ptr = htole64(paddr);
-	e->dword[0] = htole32((m->m_pkthdr.len << MHI_TRE0_DATA_LEN_SHFT) &
+	e->dword[0] = htole32((M_PKTLEN(m) << MHI_TRE0_DATA_LEN_SHFT) &
 	    MHI_TRE0_DATA_LEN_MASK);
 	e->dword[1] = htole32(MHI_TRE1_DATA_IEOT |
 	    MHI_TRE1_DATA_TYPE_TRANSFER << MHI_TRE1_DATA_TYPE_SHIFT);
@@ -2811,7 +2790,7 @@ qwz_mhi_start_channel(struct qwz_pci_softc *psc,
 			struct qwz_xfer_data *xfer;
 			uint64_t paddr;
 
-			e = qwz_pci_xfer_ring_get_elem(ring, wp);
+			e = (struct qwz_mhi_ring_element *)(qwz_pci_xfer_ring_get_elem(ring, wp));
 			xfer = qwz_pci_xfer_ring_get_data(ring, wp);
 			paddr = xfer->map->dm_segs[0].ds_addr;
 
@@ -3411,7 +3390,7 @@ qwz_mhi_fw_load_bhie(struct qwz_pci_softc *psc, uint8_t *data, size_t len)
 
 	/* Create vector which controls chunk-wise DMA copy in hardware. */
 	paddr = QWZ_DMA_DVA(psc->amss_data);
-	vec = QWZ_DMA_KVA(psc->amss_vec);
+	vec = (struct qwz_dma_vec_entry *)(QWZ_DMA_KVA(psc->amss_vec));
 	remain = len;
 	for (i = 0; i < nseg; i++) {
 		vec[i].paddr = paddr;
@@ -3517,7 +3496,7 @@ qwz_rddm_prepare(struct qwz_pci_softc *psc)
 
 	/* Create vector which controls chunk-wise DMA copy from hardware. */
 	paddr = QWZ_DMA_DVA(data_adm);
-	vec = QWZ_DMA_KVA(vec_adm);
+	vec = (struct qwz_dma_vec_entry *)(QWZ_DMA_KVA(vec_adm));
 	remain = len;
 	for (i = 0; i < nseg; i++) {
 		vec[i].paddr = paddr;
@@ -3661,7 +3640,7 @@ qwz_pci_event_ring_get_elem(struct qwz_pci_event_ring *ring, uint64_t rp)
 	if (offset >= ring->size)
 		return NULL;
 
-	return addr + offset;
+	return ((uint8_t *)addr) + offset;
 }
 
 void
@@ -3784,7 +3763,7 @@ qwz_pci_intr_ctrl_event_cmd_complete(struct qwz_pci_softc *psc,
 	uint32_t tre1, chid;
 	size_t i;
 
-	e = qwz_pci_cmd_ring_get_elem(cmd_ring, ptr);
+	e = (struct qwz_mhi_ring_element *)(qwz_pci_cmd_ring_get_elem(cmd_ring, ptr));
 	if (e == NULL)
 		return;
 
@@ -3852,7 +3831,7 @@ qwz_pci_intr_ctrl_event(struct qwz_pci_softc *psc,
 	    0, QWZ_DMA_LEN(ring->dmamem), BUS_DMASYNC_POSTREAD);
 
 	while (ring->rp != rp) {
-		e = qwz_pci_event_ring_get_elem(ring, ring->rp);
+		e = (struct qwz_mhi_ring_element *)(qwz_pci_event_ring_get_elem(ring, ring->rp));
 		if (e == NULL)
 			return 0;
 
@@ -3953,16 +3932,16 @@ qwz_pci_intr_data_event_tx(struct qwz_pci_softc *psc, struct qwz_mhi_ring_elemen
 			DNPRINTF(QWZ_D_MHI, "%s:%d: ring->rp 0x%llx "
 			    "ring->wp 0x%llx rp 0x%llx\n", __func__,
 			    __LINE__, ring->rp, ring->wp, rp);
-			e = qwz_pci_xfer_ring_get_elem(ring, ring->rp);
+			e = (struct qwz_mhi_ring_element *)(qwz_pci_xfer_ring_get_elem(ring, ring->rp));
 			xfer = qwz_pci_xfer_ring_get_data(ring, ring->rp);
 
 			if (ring->rp == evrp)
 				len = evlen;
 			else
-				len = xfer->m->m_pkthdr.len;
+				len = M_PKTLEN(xfer->m);
 
 			bus_dmamap_sync(sc->sc_dmat, xfer->map, 0,
-			    xfer->m->m_pkthdr.len, BUS_DMASYNC_POSTREAD);
+			    M_PKTLEN(xfer->m), BUS_DMASYNC_POSTREAD);
 #ifdef QWZ_DEBUG
 			{
 			int i;
@@ -3980,16 +3959,16 @@ qwz_pci_intr_data_event_tx(struct qwz_pci_softc *psc, struct qwz_mhi_ring_elemen
 #endif
 			if (ring->mhi_chan_direction == MHI_CHAN_TYPE_INBOUND) {
 				/* Save m_data as upper layers use m_adj(9) */
-				void *o_data = xfer->m->m_data;
+				void *o_data = mbuf_data(xfer->m);
 
 				/* Pass mbuf to upper layers */
 				qwz_qrtr_recv_msg(sc, xfer->m);
 
 				/* Reset RX mbuf instead of free/alloc */
-				KASSERT(xfer->m->m_next == NULL);
-				xfer->m->m_data = o_data;
-				xfer->m->m_len = xfer->m->m_pkthdr.len =
-				    QWZ_PCI_XFER_MAX_DATA_SIZE;
+				KASSERT(mbuf_next(xfer->m) == NULL);
+				mbuf_setdata(xfer->m, o_data,
+				    QWZ_PCI_XFER_MAX_DATA_SIZE);
+				M_SETLEN(xfer->m, QWZ_PCI_XFER_MAX_DATA_SIZE);
 
 				paddr = xfer->map->dm_segs[0].ds_addr;
 
@@ -4076,7 +4055,7 @@ qwz_pci_intr_data_event(struct qwz_pci_softc *psc,
 	    0, QWZ_DMA_LEN(ring->dmamem), BUS_DMASYNC_POSTREAD);
 
 	while (ring->rp != rp) {
-		e = qwz_pci_event_ring_get_elem(ring, ring->rp);
+		e = (struct qwz_mhi_ring_element *)(qwz_pci_event_ring_get_elem(ring, ring->rp));
 		if (e == NULL)
 			return 0;
 
@@ -4125,7 +4104,7 @@ qwz_pci_intr_data_event(struct qwz_pci_softc *psc,
 int
 qwz_pci_intr_mhi_ctrl(void *arg)
 {
-	struct qwz_pci_softc *psc = arg;
+	struct qwz_pci_softc *psc = (struct qwz_pci_softc *)(arg);
 
 	if (qwz_pci_intr_ctrl_event(psc, &psc->event_rings[0], 0))
 		return 1;
@@ -4136,7 +4115,7 @@ qwz_pci_intr_mhi_ctrl(void *arg)
 int
 qwz_pci_intr_mhi_data(void *arg)
 {
-	struct qwz_pci_softc *psc = arg;
+	struct qwz_pci_softc *psc = (struct qwz_pci_softc *)(arg);
 
 	if (qwz_pci_intr_data_event(psc, &psc->event_rings[1], 0))
 		return 1;
@@ -4147,8 +4126,8 @@ qwz_pci_intr_mhi_data(void *arg)
 int
 qwz_pci_intr(void *arg)
 {
-	struct qwz_pci_softc *psc = arg;
-	struct qwz_softc *sc = (void *)psc;
+	struct qwz_pci_softc *psc = (struct qwz_pci_softc *)(arg);
+	struct qwz_softc *sc = (struct qwz_softc *)((void *)psc);
 	uint32_t ee, state;
 	int ret = 0;
 
@@ -4229,3 +4208,55 @@ qwz_pci_intr(void *arg)
 
 	return ret;
 }
+
+#ifdef __APPLE__
+/*
+ * macOS entry points. struct qwz_pci_softc is private to this file, so the
+ * IOKit glue (ItlQwz.cpp) allocates, attaches and detaches through these.
+ * All three run holding the gate (see qwz_compat.h).
+ */
+struct qwz_softc *
+qwz_pci_macos_alloc(void)
+{
+	struct qwz_pci_softc *psc;
+
+	psc = malloc(sizeof(*psc), M_DEVBUF, M_WAITOK | M_ZERO);
+	if (psc == NULL)
+		return NULL;
+	strlcpy(psc->sc_sc.sc_dev.dv_xname, "qwz0",
+	    sizeof(psc->sc_sc.sc_dev.dv_xname));
+	return &psc->sc_sc;
+}
+
+/* Returns 0 once the device is attached and the firmware reported a MAC address. */
+int
+qwz_pci_macos_attach(struct qwz_softc *sc, struct pci_attach_args *pa)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+
+	qwz_pci_attach(NULL, &sc->sc_dev, pa);
+	if (ic->ic_if.if_softc != sc)
+		return ENXIO;		/* qwz_pci_attach printed why */
+
+	/* config_mountroot() deferred qwz_attach(): firmware is built in. */
+	qwz_compat_run_mountroot();
+	if (IEEE80211_ADDR_EQ(ic->ic_myaddr, etheranyaddr)) {
+		printf("%s: firmware did not report a MAC address\n",
+		    sc->sc_dev.dv_xname);
+		return EIO;
+	}
+	return 0;
+}
+
+void
+qwz_pci_macos_detach(struct qwz_softc *sc)
+{
+	struct qwz_pci_softc *psc = (struct qwz_pci_softc *)sc;
+
+	if (sc->sc_ic.ic_if.if_softc == sc)
+		qwz_pci_detach(&sc->sc_dev, 0);
+	else if (psc->sc_ih[0])
+		pci_intr_disestablish(psc->sc_pc, psc->sc_ih[0]);
+	free(psc, M_DEVBUF, sizeof(*psc));
+}
+#endif /* __APPLE__ */

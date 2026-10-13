@@ -73,17 +73,9 @@ IOService* itlwm::probe(IOService *provider, SInt32 *score)
     if (!device) {
         return NULL;
     }
-    if (ItlIwx::iwx_match(device)) {
+    if (ItlQwz::qwz_match(device)) {
         isMatch = true;
-        fHalService = new ItlIwx;
-    }
-    if (!isMatch && ItlIwm::iwm_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwm;
-    }
-    if (!isMatch && ItlIwn::iwn_match(device)) {
-        isMatch = true;
-        fHalService = new ItlIwn;
+        fHalService = new ItlQwz;
     }
     if (isMatch) {
         device->findPCICapability(PCI_CAP_ID_MSIX, &msixCap);
@@ -417,7 +409,7 @@ const OSString * itlwm::newVendorString() const
 
 const OSString * itlwm::newModelString() const
 {
-    return OSString::withCString("Intel Wireless Card");
+    return OSString::withCString("Qualcomm WCN7850 Wireless Card");
 }
 
 bool itlwm::initPCIPowerManagment(IOPCIDevice *provider)

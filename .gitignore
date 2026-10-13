@@ -1,0 +1,5 @@
+firmware/dl/
+firmware/FwBinary.cpp
+build/
+deps/
+.DS_Store

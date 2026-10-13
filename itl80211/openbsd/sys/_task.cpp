@@ -26,6 +26,17 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOCommandGate.h>
 
+extern IOCommandGate *_fCommandGate;
+
+static IOReturn
+taskq_run_gated(OSObject *, void *arg0, void *, void *, void *)
+{
+    struct task *work = (struct task *)arg0;
+
+    (*work->t_func)(work->t_arg);
+    return kIOReturnSuccess;
+}
+
 enum ETQ_STATE {
     TQ_S_CREATED,
     TQ_S_RUNNING,
@@ -105,7 +116,15 @@ taskq_thread(void *xtq)
     while (taskq_next_work(tq, &work)) {
 //        WITNESS_LOCK(&tq->tq_lock_object, 0);
 //        IOLog("itlwm: taskq worker thread=%lld work=%s\n", thread_tid(current_thread()), work.name);
-        (*work.t_func)(work.t_arg);
+        /*
+         * QwzMac: run the task holding the controller's gate, as OpenBSD
+         * runs tasks holding the kernel lock. A task may tsleep(), which
+         * releases the gate while it waits (see qwz/qwz_compat.h).
+         */
+        if (_fCommandGate != NULL)
+            _fCommandGate->runAction(taskq_run_gated, &work);
+        else
+            (*work.t_func)(work.t_arg);
 //        IOLog("itlwm: taskq worker thread=%lld work=%s done", thread_tid(current_thread()), work.name);
 //        WITNESS_UNLOCK(&tq->tq_lock_object, 0);
 //        sched_pause(yield);

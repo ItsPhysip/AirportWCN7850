@@ -3,74 +3,48 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<string>English</string>
 	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
+	<string>QwzMac</string>
 	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<string>com.razvanccr.QwzMac</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
+	<string>QwzMac</string>
 	<key>CFBundlePackageType</key>
-	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<string>KEXT</string>
 	<key>CFBundleShortVersionString</key>
-	<string>$(MODULE_VERSION)</string>
+	<string>@VERSION@</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
 	<key>CFBundleVersion</key>
-	<string>$(MODULE_VERSION)</string>
+	<string>@VERSION@</string>
 	<key>IOKitPersonalities</key>
 	<dict>
-		<key>itlwm</key>
+		<key>QwzMac</key>
 		<dict>
 			<key>CFBundleIdentifier</key>
-			<string>com.zxystd.itlwm</string>
+			<string>com.razvanccr.QwzMac</string>
+			<!-- HeliPort finds the driver by this class name, so it stays "itlwm". -->
 			<key>IOClass</key>
 			<string>itlwm</string>
 			<key>IOMatchCategory</key>
 			<string>IODefaultMatchCategory</string>
+			<!-- Qualcomm WCN7850 (FastConnect 7800): vendor 0x17cb, device 0x1107 -->
 			<key>IOPCIPrimaryMatch</key>
-			<string>0x00008086&amp;0x0000ffff</string>
+			<string>0x110717cb</string>
 			<key>IOProbeScore</key>
 			<integer>2000</integer>
 			<key>IOProviderClass</key>
 			<string>IOPCIDevice</string>
 			<key>IOUserClientClass</key>
 			<string>ItlNetworkUserClient</string>
+			<!-- Optional networks to join at boot: WiFi_1 = { ssid, password }, ... -->
 			<key>WiFiConfig</key>
-			<dict>
-				<key>WiFi_1</key>
-				<dict>
-					<key>password</key>
-					<string>zxyssdt112233</string>
-					<key>ssid</key>
-					<string>ssdt</string>
-				</dict>
-				<key>WiFi_2</key>
-				<dict>
-					<key>password</key>
-					<string>zxyssdt112233</string>
-					<key>ssid</key>
-					<string>ssdt_5G</string>
-				</dict>
-				<key>WiFi_3</key>
-				<dict>
-					<key>password</key>
-					<string></string>
-					<key>ssid</key>
-					<string>Redmi</string>
-				</dict>
-				<key>WiFi_4</key>
-				<dict>
-					<key>password</key>
-					<string>9utc5c5f</string>
-					<key>ssid</key>
-					<string>CMCC-KtG6</string>
-				</dict>
-			</dict>
+			<dict/>
 		</dict>
 	</dict>
-	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2020 钟先耀. All rights reserved.</string>
 	<key>OSBundleLibraries</key>
 	<dict>
 		<key>com.apple.iokit.IONetworkingFamily</key>

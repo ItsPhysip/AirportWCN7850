@@ -54,37 +54,7 @@
  * Driver for Qualcomm Technologies 802.11be chipset.
  */
 
-#include "bpfilter.h"
-
-#include <sys/types.h>
-#include <sys/param.h>
-#include <sys/device.h>
-#include <sys/rwlock.h>
-#include <sys/systm.h>
-#include <sys/socket.h>
-#include <sys/sockio.h>
-
-#include <sys/refcnt.h>
-#include <sys/task.h>
-
-#include <machine/bus.h>
-#include <machine/intr.h>
-
-#ifdef __HAVE_FDT
-#include <dev/ofw/openfirm.h>
-#endif
-
-#if NBPFILTER > 0
-#include <net/bpf.h>
-#endif
-#include <net/if.h>
-#include <net/if_media.h>
-
-#include <netinet/in.h>
-#include <netinet/if_ether.h>
-
-#include <net80211/ieee80211_var.h>
-#include <net80211/ieee80211_radiotap.h>
+#include "qwz_compat.h"	/* macOS: replaces the OpenBSD kernel headers */
 
 /* XXX linux porting goo */
 #ifdef __LP64__
@@ -101,9 +71,8 @@
 #define test_bit(i, a)  ((a) & (1 << (i)))
 #define clear_bit(i, a) ((a)) &= ~(1 << (i))
 #define set_bit(i, a)   ((a)) |= (1 << (i))
-#define container_of(ptr, type, member) ({			\
-	const __typeof( ((type *)0)->member ) *__mptr = (ptr);	\
-	(type *)( (char *)__mptr - offsetof(type,member) );})
+#define container_of(ptr, type, member) \
+	((type *)((char *)(ptr) - offsetof(type, member)))	/* macOS: C++-safe */
 
 #if NBPFILTER > 0
 static inline uint8_t
@@ -118,8 +87,8 @@ hweight8(uint8_t x)
 
 /* #define QWZ_DEBUG */
 
-#include <dev/ic/qwzreg.h>
-#include <dev/ic/qwzvar.h>
+#include "qwzreg.h"
+#include "qwzvar.h"
 
 #ifdef QWZ_DEBUG
 uint32_t	qwz_debug = 0
@@ -205,7 +174,7 @@ qwz_node_clear_peer_id(struct qwz_softc *sc, struct ath12k_peer *peer)
 
 	if (nq != NULL && nq->peer_id == peer->peer_id)
 		nq->peer_id = HAL_INVALID_PEERID;
-	RBT_FOREACH(ni, ieee80211_tree, &ic->ic_tree) {
+	RB_FOREACH(ni, ieee80211_tree, &ic->ic_tree) {
 		nq = (struct qwz_node *)ni;
 		if (nq->peer_id == peer->peer_id)
 			nq->peer_id = HAL_INVALID_PEERID;
@@ -232,7 +201,7 @@ int
 qwz_init(struct ifnet *ifp)
 {
 	int error, core_ready = 0;
-	struct qwz_softc *sc = ifp->if_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ifp->if_softc);
 	struct ieee80211com *ic = &sc->sc_ic;
 	int s = splnet();
 
@@ -347,8 +316,7 @@ qwz_init(struct ifnet *ifp)
 			    sc->sc_dev.dv_xname, ether_sprintf(ic->ic_myaddr),
 			    error);
 
-		ieee80211_media_init(ifp, ieee80211_media_change,
-		    ieee80211_media_status);
+		ieee80211_media_init(ifp);	/* macOS: itl80211 fills in the callbacks */
 	}
 
 	if (ifp->if_flags & IFF_UP) {
@@ -400,7 +368,7 @@ qwz_del_task(struct qwz_softc *sc, struct taskq *taskq, struct task *task)
 void
 qwz_stop(struct ifnet *ifp)
 {
-	struct qwz_softc *sc = ifp->if_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ifp->if_softc);
 	struct ieee80211com *ic = &sc->sc_ic;
 	int s = splnet();
 
@@ -468,7 +436,7 @@ qwz_free_firmware(struct qwz_softc *sc)
 int
 qwz_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 {
-	struct qwz_softc *sc = ifp->if_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ifp->if_softc);
 	int s, err = 0;
 
 	/*
@@ -572,7 +540,7 @@ qwz_tx(struct qwz_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 void
 qwz_start(struct ifnet *ifp)
 {
-	struct qwz_softc *sc = ifp->if_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ifp->if_softc);
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_node *ni;
 	struct ether_header *eh;
@@ -591,7 +559,7 @@ qwz_start(struct ifnet *ifp)
 		/* need to send management frames even if we're not RUNning */
 		m = mq_dequeue(&ic->ic_mgtq);
 		if (m) {
-			ni = m->m_pkthdr.ph_cookie;
+			ni = ((struct ieee80211_node *)mbuf_pkthdr_rcvif(m));
 			goto sendit;
 		}
 
@@ -602,7 +570,7 @@ qwz_start(struct ifnet *ifp)
 		m = ifq_dequeue(&ifp->if_snd);
 		if (!m)
 			break;
-		if (m->m_len < sizeof (*eh) &&
+		if (M_LEN(m) < sizeof (*eh) &&
 		    (m = m_pullup(m, sizeof (*eh))) == NULL) {
 			ifp->if_oerrors++;
 			continue;
@@ -635,7 +603,7 @@ qwz_start(struct ifnet *ifp)
 void
 qwz_watchdog(struct ifnet *ifp)
 {
-	struct qwz_softc *sc = ifp->if_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ifp->if_softc);
 
 	ifp->if_timer = 0;
 
@@ -658,7 +626,7 @@ int
 qwz_queue_setkey_cmd(struct ieee80211com *ic, struct ieee80211_node *ni,
     struct ieee80211_key *k, int cmd)
 {
-	struct qwz_softc *sc = ic->ic_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ic->ic_softc);
 	struct qwz_setkey_task_arg *a;
 
 	if (sc->setkey_nkeys >= nitems(sc->setkey_arg) ||
@@ -679,7 +647,7 @@ int
 qwz_set_key(struct ieee80211com *ic, struct ieee80211_node *ni,
     struct ieee80211_key *k)
 {
-	struct qwz_softc *sc = ic->ic_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ic->ic_softc);
 
 	if (test_bit(ATH12K_FLAG_HW_CRYPTO_DISABLED, sc->sc_flags) ||
 	    k->k_cipher == IEEE80211_CIPHER_WEP40 ||
@@ -693,7 +661,7 @@ void
 qwz_delete_key(struct ieee80211com *ic, struct ieee80211_node *ni,
     struct ieee80211_key *k)
 {
-	struct qwz_softc *sc = ic->ic_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ic->ic_softc);
 
 	if (test_bit(ATH12K_FLAG_HW_CRYPTO_DISABLED, sc->sc_flags) ||
 	    k->k_cipher == IEEE80211_CIPHER_WEP40 ||
@@ -936,7 +904,7 @@ qwz_del_sta_key(struct qwz_softc *sc, struct ieee80211_node *ni,
 void
 qwz_setkey_task(void *arg)
 {
-	struct qwz_softc *sc = arg;
+	struct qwz_softc *sc = (struct qwz_softc *)(arg);
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct qwz_setkey_task_arg a;
 	struct ieee80211_key k;
@@ -990,7 +958,7 @@ int
 qwz_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 {
 	struct ifnet *ifp = &ic->ic_if;
-	struct qwz_softc *sc = ifp->if_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ifp->if_softc);
 
 	/* We may get triggered by received frames during qwz_stop(). */
 	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
@@ -1135,9 +1103,11 @@ out:
 	splx(s);
 }
 
+#ifndef __APPLE__
 struct cfdriver qwz_cd = {
 	NULL, "qwz", DV_IFNET
 };
+#endif
 
 void
 qwz_wmi_init_wcn7850(struct qwz_softc *sc,
@@ -3801,7 +3771,7 @@ static const struct qmi_elem_info qmi_wlanfw_shadow_reg_cfg_s_v01_ei[] = {
 	},
 	{
 		.data_type	= QMI_EOTI,
-		.array_type	= QMI_COMMON_TLV_TYPE,
+		.array_type	= (enum qmi_array_type)(QMI_COMMON_TLV_TYPE),
 	},
 };
 
@@ -4034,7 +4004,7 @@ static const struct qmi_elem_info qmi_wlanfw_wlan_cfg_resp_msg_v01_ei[] = {
 int
 qwz_ce_intr(void *arg)
 {
-	struct qwz_ce_pipe *pipe = arg;
+	struct qwz_ce_pipe *pipe = (struct qwz_ce_pipe *)(arg);
 	struct qwz_softc *sc = pipe->sc;
 	int ret;
 
@@ -4064,7 +4034,7 @@ qwz_ce_intr(void *arg)
 int
 qwz_ext_intr(void *arg)
 {
-	struct qwz_ext_irq_grp *irq_grp = arg;
+	struct qwz_ext_irq_grp *irq_grp = (struct qwz_ext_irq_grp *)(arg);
 	struct qwz_softc *sc = irq_grp->sc;
 
 	if (!test_bit(ATH12K_FLAG_EXT_IRQ_ENABLED, sc->sc_flags)) {
@@ -4380,7 +4350,7 @@ qwz_qmi_decode_datalen(struct qwz_softc *sc, size_t *used, uint32_t *datalen,
 		    sc->sc_dev.dv_xname, ei->tlv_type);
 		return -1;
 	}
-	memcpy(output + ei->offset, datalen, sizeof(*datalen));
+	memcpy(((uint8_t *)output) + ei->offset, datalen, sizeof(*datalen));
 	return 0;
 }
 
@@ -4445,7 +4415,7 @@ qwz_qmi_decode_string(struct qwz_softc *sc, size_t *used_total,
 
 	memcpy(output, p, len);
 
-	p = output;
+	p = (uint8_t *)(output);
 	p[len] = '\0';
 	DNPRINTF(QWZ_D_QMI, "%s: string (len %u): %s\n", __func__, len, p);
 
@@ -4535,7 +4505,7 @@ qwz_qmi_decode_struct(struct qwz_softc *sc, size_t *used_total,
 		    ei->data_type, ei->elem_size, ei->elem_size, remain);
 		switch (ei->data_type) {
 		case QMI_UNSIGNED_1_BYTE:
-			if (qwz_qmi_decode_byte(output + ei->offset, ei, p))
+			if (qwz_qmi_decode_byte(((uint8_t *)output) + ei->offset, ei, p))
 				return -1;
 			remain -= ei->elem_size;
 			p += ei->elem_size;
@@ -4543,7 +4513,7 @@ qwz_qmi_decode_struct(struct qwz_softc *sc, size_t *used_total,
 			break;
 		case QMI_UNSIGNED_2_BYTE:
 		case QMI_SIGNED_2_BYTE_ENUM:
-			if (qwz_qmi_decode_word(output + ei->offset, ei, p))
+			if (qwz_qmi_decode_word(((uint8_t *)output) + ei->offset, ei, p))
 				return -1;
 			remain -= ei->elem_size;
 			p += ei->elem_size;
@@ -4551,14 +4521,14 @@ qwz_qmi_decode_struct(struct qwz_softc *sc, size_t *used_total,
 			break;
 		case QMI_UNSIGNED_4_BYTE:
 		case QMI_SIGNED_4_BYTE_ENUM:
-			if (qwz_qmi_decode_dword(output + ei->offset, ei, p))
+			if (qwz_qmi_decode_dword(((uint8_t *)output) + ei->offset, ei, p))
 				return -1;
 			remain -= ei->elem_size;
 			p += ei->elem_size;
 			*used_total += ei->elem_size;
 			break;
 		case QMI_UNSIGNED_8_BYTE:
-			if (qwz_qmi_decode_qword(output + ei->offset, ei, p))
+			if (qwz_qmi_decode_qword(((uint8_t *)output) + ei->offset, ei, p))
 				return -1;
 			remain -= ei->elem_size;
 			p += ei->elem_size;
@@ -4573,7 +4543,7 @@ qwz_qmi_decode_struct(struct qwz_softc *sc, size_t *used_total,
 			}
 			used = 0;
 			if (qwz_qmi_decode_struct(sc, &used,
-			    output + ei->offset, output_len - ei->offset,
+			    ((uint8_t *)output) + ei->offset, output_len - ei->offset,
 			    ei, p, remain, nested + 1))
 				return -1;
 			remain -= used;
@@ -4583,7 +4553,7 @@ qwz_qmi_decode_struct(struct qwz_softc *sc, size_t *used_total,
 		case QMI_STRING:
 			used = 0;
 			if (qwz_qmi_decode_string(sc, &used,
-			    output + ei->offset, output_len - ei->offset,
+			    ((uint8_t *)output) + ei->offset, output_len - ei->offset,
 			    ei, p, remain, 0, 1))
 				return -1;
 			remain -= used;
@@ -4754,7 +4724,7 @@ qwz_qmi_decode_msg(struct qwz_softc *sc, void *output, size_t output_len,
 			case QMI_STRUCT:
 				used = 0;
 				if (qwz_qmi_decode_struct(sc, &used,
-				    output + outoff, output_len - outoff,
+				    ((uint8_t *)output) + outoff, output_len - outoff,
 				    ei, p, remain, 0))
 					return -1;
 				remain -= used;
@@ -4773,7 +4743,7 @@ qwz_qmi_decode_msg(struct qwz_softc *sc, void *output, size_t output_len,
 			case QMI_STRING:
 				used = 0;
 				if (qwz_qmi_decode_string(sc, &used,
-				    output + outoff, output_len - outoff,
+				    ((uint8_t *)output) + outoff, output_len - outoff,
 				    ei, p, remain, datalen, 0))
 					return -1;
 				remain -= used;
@@ -4795,7 +4765,7 @@ qwz_qmi_decode_msg(struct qwz_softc *sc, void *output, size_t output_len,
 					    "short\n", __func__);
 					return -1;
 				}
-				if (qwz_qmi_decode_byte(output + outoff,
+				if (qwz_qmi_decode_byte(((uint8_t *)output) + outoff,
 				    ei, p))
 					return -1;
 				remain -= ei->elem_size;
@@ -4808,7 +4778,7 @@ qwz_qmi_decode_msg(struct qwz_softc *sc, void *output, size_t output_len,
 					    "short\n", __func__);
 					return -1;
 				}
-				if (qwz_qmi_decode_word(output + outoff,
+				if (qwz_qmi_decode_word(((uint8_t *)output) + outoff,
 				    ei, p))
 					return -1;
 				remain -= ei->elem_size;
@@ -4821,7 +4791,7 @@ qwz_qmi_decode_msg(struct qwz_softc *sc, void *output, size_t output_len,
 					    "short\n", __func__);
 					return -1;
 				}
-				if (qwz_qmi_decode_dword(output + outoff,
+				if (qwz_qmi_decode_dword(((uint8_t *)output) + outoff,
 				    ei, p))
 					return -1;
 				remain -= ei->elem_size;
@@ -4833,7 +4803,7 @@ qwz_qmi_decode_msg(struct qwz_softc *sc, void *output, size_t output_len,
 					    "short 4\n", __func__);
 					return -1;
 				}
-				if (qwz_qmi_decode_qword(output + outoff,
+				if (qwz_qmi_decode_qword(((uint8_t *)output) + outoff,
 				    ei, p))
 					return -1;
 				remain -= ei->elem_size;
@@ -5346,12 +5316,12 @@ qwz_qrtr_say_hello(struct qwz_softc *sc)
 		MCLGET(m, M_DONTWAIT);
 	else
 		MCLGETL(m, M_DONTWAIT, padlen);
-	if ((m->m_flags & M_EXT) == 0) {
+	if ((M_FLAGS(m) & M_EXT) == 0) {
 		err = ENOBUFS;
 		goto done;
 	}
 
-	m->m_len = m->m_pkthdr.len = padlen;
+	M_SETLEN(m, padlen);
 
 	memset(&hdr, 0, sizeof(hdr));
 	hdr.version = htole32(QRTR_PROTO_VER_1);
@@ -5410,12 +5380,12 @@ qwz_qrtr_resume_tx(struct qwz_softc *sc)
 		MCLGET(m, M_DONTWAIT);
 	else
 		MCLGETL(m, M_DONTWAIT, padlen);
-	if ((m->m_flags & M_EXT) == 0) {
+	if ((M_FLAGS(m) & M_EXT) == 0) {
 		err = ENOBUFS;
 		goto done;
 	}
 
-	m->m_len = m->m_pkthdr.len = padlen;
+	M_SETLEN(m, padlen);
 
 	memset(&hdr, 0, sizeof(hdr));
 	hdr.version = htole32(QRTR_PROTO_VER_1);
@@ -5491,7 +5461,7 @@ qwz_qrtr_recv_msg(struct qwz_softc *sc, struct mbuf *m)
 		return;
 	}
 
-	if (size > m->m_pkthdr.len) {
+	if (size > M_PKTLEN(m)) {
 		printf("%s: bad size in qrtr message header: %u\n",
 		    sc->sc_dev.dv_xname, size);
 		return;
@@ -5537,7 +5507,7 @@ int
 qwz_qmi_encode_datalen(uint8_t *p, uint32_t *datalen,
     const struct qmi_elem_info *ei, void *input)
 {
-	memcpy(datalen, input + ei->offset, sizeof(uint32_t));
+	memcpy(datalen, ((uint8_t *)input) + ei->offset, sizeof(uint32_t));
 
 	if (ei->elem_size == sizeof(uint8_t)) {
 		p[0] = (*datalen & 0xff);
@@ -5564,7 +5534,7 @@ qwz_qmi_encode_byte(uint8_t *p, const struct qmi_elem_info *ei, void *input,
 	if (p == NULL)
 		return 0;
 
-	memcpy(p, input + ei->offset + (i * ei->elem_size), ei->elem_size);
+	memcpy(p, ((uint8_t *)input) + ei->offset + (i * ei->elem_size), ei->elem_size);
 	return 0;
 }
 
@@ -5582,7 +5552,7 @@ qwz_qmi_encode_word(uint8_t *p, const struct qmi_elem_info *ei, void *input,
 	if (p == NULL)
 		return 0;
 
-	memcpy(&val, input + ei->offset + (i * ei->elem_size), ei->elem_size);
+	memcpy(&val, ((uint8_t *)input) + ei->offset + (i * ei->elem_size), ei->elem_size);
 	val = htole16(val);
 	memcpy(p, &val, sizeof(val));
 	return 0;
@@ -5602,7 +5572,7 @@ qwz_qmi_encode_dword(uint8_t *p, const struct qmi_elem_info *ei, void *input,
 	if (p == NULL)
 		return 0;
 
-	memcpy(&val, input + ei->offset + (i * ei->elem_size), ei->elem_size);
+	memcpy(&val, ((uint8_t *)input) + ei->offset + (i * ei->elem_size), ei->elem_size);
 	val = htole32(val);
 	memcpy(p, &val, sizeof(val));
 	return 0;
@@ -5622,7 +5592,7 @@ qwz_qmi_encode_qword(uint8_t *p, const struct qmi_elem_info *ei, void *input,
 	if (p == NULL)
 		return 0;
 
-	memcpy(&val, input + ei->offset + (i * ei->elem_size), ei->elem_size);
+	memcpy(&val, ((uint8_t *)input) + ei->offset + (i * ei->elem_size), ei->elem_size);
 	val = htole64(val);
 	memcpy(p, &val, sizeof(val));
 	return 0;
@@ -5642,7 +5612,7 @@ qwz_qmi_encode_struct(uint8_t *p, size_t *encoded_len,
 		if (ei->data_type == QMI_OPT_FLAG) {
 			uint8_t do_encode, tlv_type;
 
-			memcpy(&do_encode, input + ei->offset, sizeof(uint8_t));
+			memcpy(&do_encode, ((uint8_t *)input) + ei->offset, sizeof(uint8_t));
 			ei++; /* Advance to element we might have to encode. */
 			if (ei->data_type == QMI_OPT_FLAG ||
 			    ei->data_type == QMI_EOTI) {
@@ -5714,7 +5684,7 @@ int
 qwz_qmi_encode_string(uint8_t *p, size_t *encoded_len,
     const struct qmi_elem_info *string_ei, void *input, size_t input_len)
 {
-	*encoded_len = strnlen(input, input_len);
+	*encoded_len = strnlen((const char *)input, input_len);
 	if (*encoded_len > string_ei->elem_len) {
 		printf("%s: QMI message buffer too short\n", __func__);
 		return -1;
@@ -5757,7 +5727,7 @@ qwz_qmi_encode_msg(uint8_t **encoded_msg, size_t *encoded_len, int type,
 		if (ei->data_type == QMI_OPT_FLAG) {
 			uint8_t do_encode, tlv_type;
 
-			memcpy(&do_encode, input + ei->offset, sizeof(uint8_t));
+			memcpy(&do_encode, ((uint8_t *)input) + ei->offset, sizeof(uint8_t));
 			ei++; /* Advance to element we might have to encode. */
 			if (ei->data_type == QMI_OPT_FLAG ||
 			    ei->data_type == QMI_EOTI) {
@@ -5796,7 +5766,7 @@ qwz_qmi_encode_msg(uint8_t **encoded_msg, size_t *encoded_len, int type,
 
 					if (qwz_qmi_encode_struct(NULL,
 					    &encoded_struct_len, ei,
-					    input + inoff, input_len - inoff))
+					    ((uint8_t *)input) + inoff, input_len - inoff))
 						goto err;
 
 					*encoded_len += encoded_struct_len;
@@ -5810,7 +5780,7 @@ qwz_qmi_encode_msg(uint8_t **encoded_msg, size_t *encoded_len, int type,
 
 			if (qwz_qmi_encode_string(NULL,
 			    &encoded_string_len, ei,
-			    input + inoff, input_len - inoff))
+			    ((uint8_t *)input) + inoff, input_len - inoff))
 				goto err;
 			*encoded_len += encoded_string_len;
 			ei++;
@@ -5831,7 +5801,7 @@ qwz_qmi_encode_msg(uint8_t **encoded_msg, size_t *encoded_len, int type,
 
 					if (qwz_qmi_encode_struct(NULL,
 					    &encoded_struct_len, ei,
-					    input + inoff,
+					    ((uint8_t *)input) + inoff,
 					    input_len - inoff))
 						goto err;
 					*encoded_len += encoded_struct_len;
@@ -5869,7 +5839,7 @@ qwz_qmi_encode_msg(uint8_t **encoded_msg, size_t *encoded_len, int type,
 		if (ei->data_type == QMI_OPT_FLAG) {
 			uint8_t do_encode, tlv_type;
 
-			memcpy(&do_encode, input + ei->offset, sizeof(uint8_t));
+			memcpy(&do_encode, ((uint8_t *)input) + ei->offset, sizeof(uint8_t));
 			ei++; /* Advance to element we might have to encode. */
 			if (ei->data_type == QMI_OPT_FLAG ||
 			    ei->data_type == QMI_EOTI) {
@@ -5943,7 +5913,7 @@ qwz_qmi_encode_msg(uint8_t **encoded_msg, size_t *encoded_len, int type,
 			case QMI_STRUCT:
 				if (qwz_qmi_encode_struct(p,
 				    &encoded_struct_len, ei,
-				    input + inoff, input_len - inoff))
+				    ((uint8_t *)input) + inoff, input_len - inoff))
 					goto err;
 				remain -= encoded_struct_len;
 				p += encoded_struct_len;
@@ -5951,7 +5921,7 @@ qwz_qmi_encode_msg(uint8_t **encoded_msg, size_t *encoded_len, int type,
 			case QMI_STRING:
 				if (qwz_qmi_encode_string(p,
 				    &encoded_string_len, ei,
-				    input + inoff, input_len - inoff))
+				    ((uint8_t *)input) + inoff, input_len - inoff))
 					goto err;
 				remain -= encoded_string_len;
 				p += encoded_string_len;
@@ -6021,12 +5991,12 @@ qwz_qmi_send_request(struct qwz_softc *sc, uint16_t msg_id, size_t msg_len,
 		MCLGET(m, M_DONTWAIT);
 	else
 		MCLGETL(m, M_DONTWAIT, padlen);
-	if ((m->m_flags & M_EXT) == 0) {
+	if ((M_FLAGS(m) & M_EXT) == 0) {
 		err = ENOBUFS;
 		goto done;
 	}
 
-	m->m_len = m->m_pkthdr.len = padlen;
+	M_SETLEN(m, padlen);
 
 	memset(&hdr, 0, sizeof(hdr));
 	hdr.version = htole32(QRTR_PROTO_VER_1);
@@ -6589,17 +6559,17 @@ qwz_core_parse_bd_ie_board(struct qwz_softc *sc,
 
 	/* go through ATH12K_BD_IE_BOARD_/ATH12K_BD_IE_REGDB_ elements */
 	while (buf_len > sizeof(struct ath12k_fw_ie)) {
-		hdr = buf;
+		hdr = (const struct ath12k_fw_ie *)(buf);
 		board_ie_id = le32toh(hdr->id);
 		board_ie_len = le32toh(hdr->len);
 		board_ie_data = hdr->data;
 
 		buf_len -= sizeof(*hdr);
-		buf += sizeof(*hdr);
+		buf = (uint8_t *)buf + sizeof(*hdr);
 
 		if (buf_len < roundup(board_ie_len, 4)) {
 			printf("%s: invalid %s length: %zu < %zu\n",
-			    sc->sc_dev.dv_xname, qwz_bd_ie_type_str(ie_id),
+			    sc->sc_dev.dv_xname, qwz_bd_ie_type_str((enum ath12k_bd_ie_type)ie_id),
 			    buf_len, roundup(board_ie_len, 4));
 			return EINVAL;
 		}
@@ -6623,19 +6593,19 @@ qwz_core_parse_bd_ie_board(struct qwz_softc *sc,
 			DPRINTF("%s: found %s for '%s'", __func__,
 			    qwz_bd_ie_type_str(ie_id), boardname);
 
-			*boardfw = board_ie_data;
+			*boardfw = (const u_char *)(board_ie_data);
 			*boardfw_len = board_ie_len;
 			return 0;
 		} else {
 			printf("%s: unknown %s id found: %d\n", __func__,
-			    qwz_bd_ie_type_str(ie_id), board_ie_id);
+			    qwz_bd_ie_type_str((enum ath12k_bd_ie_type)ie_id), board_ie_id);
 		}
 next:
 		/* jump over the padding */
 		board_ie_len = roundup(board_ie_len, 4);
 
 		buf_len -= board_ie_len;
-		buf += board_ie_len;
+		buf = (uint8_t *)buf + board_ie_len;
 	}
 
 	/* no match found */
@@ -6848,7 +6818,7 @@ qwz_qmi_load_file_target_mem(struct qwz_softc *sc, const u_char *data,
 	while (remaining) {
 		req->valid = 1;
 		req->file_id_valid = 1;
-		req->file_id = sc->qmi_target.board_id;
+		req->file_id = (enum qmi_wlanfw_cal_temp_id_enum_v01)(sc->qmi_target.board_id);
 		req->total_size_valid = 1;
 		req->total_size = remaining;
 		req->seg_id_valid = 1;
@@ -7263,7 +7233,7 @@ qwz_dp_srng_msi_setup(struct qwz_softc *sc, struct hal_srng_params *ring_params,
 	int ret;
 
 	ret = sc->ops.get_user_msi_vector(sc, "DP",
-	    &msi_data_count, &msi_data_start, &msi_irq_start);
+	    (int *)(&msi_data_count), &msi_data_start, &msi_irq_start);
 	if (ret)
 		return;
 
@@ -7306,7 +7276,7 @@ qwz_dp_srng_setup(struct qwz_softc *sc, struct dp_srng *ring,
 		return ENOMEM;
 	}
 
-	ring->vaddr = QWZ_DMA_KVA(ring->mem);
+	ring->vaddr = (uint32_t *)(QWZ_DMA_KVA(ring->mem));
 	ring->paddr = QWZ_DMA_DVA(ring->mem);
 
 	params.ring_base_vaddr = ring->vaddr;
@@ -7523,7 +7493,7 @@ qwz_dp_link_desc_bank_alloc(struct qwz_softc *sc,
 			goto err;
 		}
 
-		desc_bank[i].vaddr = QWZ_DMA_KVA(desc_bank[i].mem);
+		desc_bank[i].vaddr = (caddr_t *)(QWZ_DMA_KVA(desc_bank[i].mem));
 		desc_bank[i].paddr = QWZ_DMA_DVA(desc_bank[i].mem);
 		desc_bank[i].size = desc_sz;
 	}
@@ -7546,7 +7516,7 @@ qwz_hal_setup_link_idle_list(struct qwz_softc *sc,
 	uint32_t reg_scatter_buf_sz = HAL_WBM_IDLE_SCATTER_BUF_SIZE / 64;
 	uint32_t val;
 
-	link_addr = (void *)sbuf[0].vaddr + HAL_WBM_IDLE_SCATTER_BUF_SIZE;
+	link_addr = (struct ath12k_buffer_addr *)((void *)(((uint8_t *)sbuf[0].vaddr) + HAL_WBM_IDLE_SCATTER_BUF_SIZE));
 
 	for (i = 1; i < nsbufs; i++) {
 		link_addr->info0 = sbuf[i].paddr & HAL_ADDR_LSB_REG_MASK;
@@ -7556,8 +7526,8 @@ qwz_hal_setup_link_idle_list(struct qwz_softc *sc,
 		    FIELD_PREP(HAL_WBM_SCATTERED_DESC_MSB_BASE_ADDR_MATCH_TAG,
 		    BASE_ADDR_MATCH_TAG_VAL);
 
-		link_addr = (void *)sbuf[i].vaddr +
-		    HAL_WBM_IDLE_SCATTER_BUF_SIZE;
+		link_addr = (struct ath12k_buffer_addr *)((void *)(((uint8_t *)sbuf[i].vaddr) +
+		    HAL_WBM_IDLE_SCATTER_BUF_SIZE));
 	}
 
 	sc->ops.write32(sc,
@@ -7679,7 +7649,7 @@ qwz_dp_scatter_idle_link_desc_setup(struct qwz_softc *sc, int size,
 			goto err;
 		}
 
-		slist[i].vaddr = QWZ_DMA_KVA(slist[i].mem);
+		slist[i].vaddr = (struct hal_wbm_link_desc *)(QWZ_DMA_KVA(slist[i].mem));
 		slist[i].paddr = QWZ_DMA_DVA(slist[i].mem);
 	}
 
@@ -7840,7 +7810,7 @@ qwz_dp_link_desc_setup(struct qwz_softc *sc,
 		n_entries = (link_desc_banks[i].size) / HAL_LINK_DESC_SIZE;
 		paddr = link_desc_banks[i].paddr;
 		while (n_entries &&
-		    (desc = qwz_hal_srng_src_get_next_entry(sc, srng))) {
+		    (desc = (uint32_t *)(qwz_hal_srng_src_get_next_entry(sc, srng)))) {
 			cookie = DP_LINK_DESC_COOKIE_SET(n_entries, i);
 			qwz_hal_set_link_desc_addr(
 			    (struct hal_wbm_link_desc *)desc, cookie, paddr,
@@ -8385,7 +8355,8 @@ qwz_dp_srng_common_setup(struct qwz_softc *sc)
 	/* When hash based routing of rx packet is enabled, 32 entries to map
 	 * the hash values to the ring will be configured.
 	 * Each hash entry uses four bits to map to a particular ring. */
-	uint32_t ring_hash_map = HAL_HASH_ROUTING_RING_SW1 << 0 |
+	uint32_t ring_hash_map;	/* macOS: C++ forbids the gotos above jumping an initialisation */
+	ring_hash_map = HAL_HASH_ROUTING_RING_SW1 << 0 |
 	    HAL_HASH_ROUTING_RING_SW2 << 4 |
 	    HAL_HASH_ROUTING_RING_SW3 << 8 |
 	    HAL_HASH_ROUTING_RING_SW4 << 12 |
@@ -8578,14 +8549,14 @@ qwz_dp_get_rx_desc(struct qwz_softc *sc, uint32_t cookie)
 	    spt_idx >= ATH12K_MAX_SPT_ENTRIES)
 		return NULL;
 
-	desc_addr_ptr = ath12k_dp_cc_get_desc_addr_ptr(sc, ppt_idx, spt_idx);
+	desc_addr_ptr = (struct ath12k_rx_desc_info **)(ath12k_dp_cc_get_desc_addr_ptr(sc, ppt_idx, spt_idx));
 	return *desc_addr_ptr;
 }
 
 struct qwz_rx_msdu *
 qwz_dp_rx_reap_desc(struct qwz_softc *sc, uint32_t cookie, void *list)
 {
-	TAILQ_HEAD(, ath12k_rx_desc_info) *used_list = list;
+	TAILQ_HEAD(, ath12k_rx_desc_info) *used_list = (decltype(used_list))list;
 	struct ath12k_rx_desc_info *desc_info;
 	struct qwz_rx_msdu *msdu;
 
@@ -8644,7 +8615,7 @@ qwz_dp_cc_desc_init(struct qwz_softc *sc)
 				return ret;
 
 			/* Update descriptor VA in SPT */
-			rx_desc_addr = ath12k_dp_cc_get_desc_addr_ptr(sc, ppt_idx, j);
+			rx_desc_addr = (struct ath12k_rx_desc_info **)(ath12k_dp_cc_get_desc_addr_ptr(sc, ppt_idx, j));
 			*rx_desc_addr = &rx_descs[j];
 		}
 	}
@@ -8674,7 +8645,7 @@ qwz_dp_cc_desc_init(struct qwz_softc *sc)
 
 				/* Update descriptor VA in SPT */
 				tx_desc_addr =
-					ath12k_dp_cc_get_desc_addr_ptr(sc, ppt_idx, j);
+					(struct ath12k_tx_desc_info **)(ath12k_dp_cc_get_desc_addr_ptr(sc, ppt_idx, j));
 				*tx_desc_addr = &tx_descs[j];
 			}
 		}
@@ -9359,7 +9330,7 @@ qwz_qmi_firmware_stop(struct qwz_softc *sc)
 {
 	int ret;
 
-	ret = qwz_qmi_wlanfw_mode_send(sc, ATH12K_FIRMWARE_MODE_OFF);
+	ret = qwz_qmi_wlanfw_mode_send(sc, (enum ath12k_firmware_mode)ATH12K_FIRMWARE_MODE_OFF);
 	if (ret) {
 		printf("%s: qmi failed to send wlan mode off: %d\n",
 		    sc->sc_dev.dv_xname, ret);
@@ -9565,20 +9536,20 @@ qwz_wmi_tlv_iter(struct qwz_softc *sc, const void *ptr, size_t len,
 		if (len < sizeof(*tlv)) {
 			printf("%s: wmi tlv parse failure at byte %zd "
 			    "(%zu bytes left, %zu expected)\n", __func__,
-			    ptr - begin, len, sizeof(*tlv));
+			    (const uint8_t *)ptr - (const uint8_t *)begin, len, sizeof(*tlv));
 			return EINVAL;
 		}
 
-		tlv = ptr;
+		tlv = (const struct wmi_tlv *)(ptr);
 		tlv_tag = FIELD_GET(WMI_TLV_TAG, tlv->header);
 		tlv_len = FIELD_GET(WMI_TLV_LEN, tlv->header);
-		ptr += sizeof(*tlv);
+		ptr = (uint8_t *)ptr + sizeof(*tlv);
 		len -= sizeof(*tlv);
 
 		if (tlv_len > len) {
 			printf("%s: wmi tlv parse failure of tag %u "
 			    "at byte %zd (%zu bytes left, %u expected)\n",
-			    __func__, tlv_tag, ptr - begin, len, tlv_len);
+			    __func__, tlv_tag, (const uint8_t *)ptr - (const uint8_t *)begin, len, tlv_len);
 			return EINVAL;
 		}
 
@@ -9588,7 +9559,7 @@ qwz_wmi_tlv_iter(struct qwz_softc *sc, const void *ptr, size_t len,
 			printf("%s: wmi tlv parse failure of tag %u "
 			    "at byte %zd (%u bytes is less than "
 			    "min length %zu)\n", __func__,
-			    tlv_tag, ptr - begin, tlv_len,
+			    tlv_tag, (const uint8_t *)ptr - (const uint8_t *)begin, tlv_len,
 			    wmi_tlv_policies[tlv_tag].min_len);
 			return EINVAL;
 		}
@@ -9597,7 +9568,7 @@ qwz_wmi_tlv_iter(struct qwz_softc *sc, const void *ptr, size_t len,
 		if (ret)
 			return ret;
 
-		ptr += tlv_len;
+		ptr = (uint8_t *)ptr + tlv_len;
 		len -= tlv_len;
 	}
 
@@ -9608,7 +9579,7 @@ int
 qwz_pull_service_ready_tlv(struct qwz_softc *sc, const void *evt_buf,
     struct ath12k_targ_cap *cap)
 {
-	const struct wmi_service_ready_event *ev = evt_buf;
+	const struct wmi_service_ready_event *ev = (const struct wmi_service_ready_event *)(evt_buf);
 
 	if (!ev)
 		return EINVAL;
@@ -9656,7 +9627,7 @@ int
 qwz_wmi_tlv_svc_rdy_parse(struct qwz_softc *sc, uint16_t tag, uint16_t len,
     const void *ptr, void *data)
 {
-	struct wmi_tlv_svc_ready_parse *svc_ready = data;
+	struct wmi_tlv_svc_ready_parse *svc_ready = (struct wmi_tlv_svc_ready_parse *)(data);
 	struct qwz_pdev_wmi *wmi_handle = &sc->wmi.wmi[0];
 	uint16_t expect_len;
 
@@ -9675,7 +9646,7 @@ qwz_wmi_tlv_svc_rdy_parse(struct qwz_softc *sc, uint16_t tag, uint16_t len,
 				return EINVAL;
 			}
 
-			qwz_wmi_service_bitmap_copy(wmi_handle, ptr);
+			qwz_wmi_service_bitmap_copy(wmi_handle, (const uint32_t *)ptr);
 
 			svc_ready->wmi_svc_bitmap_done = 1;
 		}
@@ -9693,7 +9664,7 @@ qwz_service_ready_event(struct qwz_softc *sc, struct mbuf *m)
 	struct wmi_tlv_svc_ready_parse svc_ready = { };
 	int ret;
 
-	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), m->m_pkthdr.len,
+	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), M_PKTLEN(m),
 	    qwz_wmi_tlv_svc_rdy_parse, &svc_ready);
 	if (ret) {
 		printf("%s: failed to parse tlv %d\n", __func__, ret);
@@ -9707,7 +9678,7 @@ int
 qwz_pull_svc_ready_ext(struct qwz_pdev_wmi *wmi_handle, const void *ptr,
     struct ath12k_service_ext_param *param)
 {
-	const struct wmi_service_ready_ext_event *ev = ptr;
+	const struct wmi_service_ready_ext_event *ev = (const struct wmi_service_ready_ext_event *)(ptr);
 
 	if (!ev)
 		return EINVAL;
@@ -9765,7 +9736,7 @@ qwz_pull_mac_phy_cap_svc_ready_ext(struct qwz_pdev_wmi *wmi_handle,
 	pdev_cap->supported_bands |= mac_phy_caps->supported_bands;
 	pdev_cap->ampdu_density = mac_phy_caps->ampdu_density;
 	sc->target_pdev_ids[sc->target_pdev_count].supported_bands =
-	    mac_phy_caps->supported_bands;
+	    (enum WMI_HOST_WLAN_BAND)(mac_phy_caps->supported_bands);
 	sc->target_pdev_ids[sc->target_pdev_count].pdev_id = mac_phy_caps->pdev_id;
 	sc->target_pdev_count++;
 
@@ -9854,7 +9825,7 @@ qwz_wmi_tlv_ext_soc_hal_reg_caps_parse(struct qwz_softc *sc, uint16_t len,
     const void *ptr, void *data)
 {
 	struct qwz_pdev_wmi *wmi_handle = &sc->wmi.wmi[0];
-	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = data;
+	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = (struct wmi_tlv_svc_rdy_ext_parse *)(data);
 	uint8_t hw_mode_id = svc_rdy_ext->pref_hw_mode_caps.hw_mode_id;
 	uint32_t phy_id_map;
 	int pdev_index = 0;
@@ -9906,7 +9877,7 @@ int
 qwz_wmi_tlv_hw_mode_caps_parse(struct qwz_softc *sc, uint16_t tag, uint16_t len,
     const void *ptr, void *data)
 {
-	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = data;
+	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = (struct wmi_tlv_svc_rdy_ext_parse *)(data);
 	struct wmi_hw_mode_capabilities *hw_mode_cap;
 	uint32_t phy_map = 0;
 
@@ -9947,7 +9918,7 @@ int
 qwz_wmi_tlv_hw_mode_caps(struct qwz_softc *sc, uint16_t len,
     const void *ptr, void *data)
 {
-	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = data;
+	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = (struct wmi_tlv_svc_rdy_ext_parse *)(data);
 	struct wmi_hw_mode_capabilities *hw_mode_caps;
 	enum wmi_host_hw_mode_config_type mode, pref;
 	uint32_t i;
@@ -9966,7 +9937,7 @@ qwz_wmi_tlv_hw_mode_caps(struct qwz_softc *sc, uint16_t len,
 	i = 0;
 	while (i < svc_rdy_ext->n_hw_mode_caps) {
 		hw_mode_caps = &svc_rdy_ext->hw_mode_caps[i];
-		mode = hw_mode_caps->hw_mode_id;
+		mode = (enum wmi_host_hw_mode_config_type)(hw_mode_caps->hw_mode_id);
 		pref = sc->wmi.preferred_hw_mode;
 
 		if (qwz_hw_mode_pri_map[mode] < qwz_hw_mode_pri_map[pref]) {
@@ -9988,7 +9959,7 @@ int
 qwz_wmi_tlv_mac_phy_caps_parse(struct qwz_softc *sc, uint16_t tag, uint16_t len,
     const void *ptr, void *data)
 {
-	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = data;
+	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = (struct wmi_tlv_svc_rdy_ext_parse *)(data);
 
 	if (tag != WMI_TAG_MAC_PHY_CAPABILITIES)
 		return EPROTO;
@@ -10017,7 +9988,7 @@ int
 qwz_wmi_tlv_ext_hal_reg_caps_parse(struct qwz_softc *sc,
     uint16_t tag, uint16_t len, const void *ptr, void *data)
 {
-	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = data;
+	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = (struct wmi_tlv_svc_rdy_ext_parse *)(data);
 
 	if (tag != WMI_TAG_HAL_REG_CAPABILITIES_EXT)
 		return EPROTO;
@@ -10064,7 +10035,7 @@ qwz_wmi_tlv_ext_hal_reg_caps(struct qwz_softc *sc, uint16_t len,
     const void *ptr, void *data)
 {
 	struct qwz_pdev_wmi *wmi_handle = &sc->wmi.wmi[0];
-	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = data;
+	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = (struct wmi_tlv_svc_rdy_ext_parse *)(data);
 	struct ath12k_hal_reg_capabilities_ext reg_cap;
 	int ret;
 	uint32_t i;
@@ -10100,7 +10071,7 @@ int
 qwz_wmi_tlv_dma_ring_caps_parse(struct qwz_softc *sc, uint16_t tag,
     uint16_t len, const void *ptr, void *data)
 {
-	struct wmi_tlv_dma_ring_caps_parse *parse = data;
+	struct wmi_tlv_dma_ring_caps_parse *parse = (struct wmi_tlv_dma_ring_caps_parse *)(data);
 
 	if (tag != WMI_TAG_DMA_RING_CAPABILITIES)
 		return EPROTO;
@@ -10119,7 +10090,7 @@ qwz_wmi_alloc_dbring_caps(struct qwz_softc *sc, uint32_t num_cap)
 	if (!ptr)
 		return ENOMEM;
 
-	sc->db_caps = ptr;
+	sc->db_caps = (struct qwz_dbring_cap *)(ptr);
 	sc->num_db_cap = num_cap;
 
 	return 0;
@@ -10138,7 +10109,7 @@ int
 qwz_wmi_tlv_dma_ring_caps(struct qwz_softc *sc, uint16_t len,
     const void *ptr, void *data)
 {
-	struct wmi_tlv_dma_ring_caps_parse *dma_caps_parse = data;
+	struct wmi_tlv_dma_ring_caps_parse *dma_caps_parse = (struct wmi_tlv_dma_ring_caps_parse *)(data);
 	struct wmi_dma_ring_capabilities *dma_caps;
 	struct qwz_dbring_cap *dir_buff_caps;
 	int ret;
@@ -10177,7 +10148,7 @@ qwz_wmi_tlv_dma_ring_caps(struct qwz_softc *sc, uint16_t len,
 			goto free_dir_buff;
 		}
 
-		dir_buff_caps[i].id = dma_caps[i].module_id;
+		dir_buff_caps[i].id = (enum wmi_direct_buffer_module)(dma_caps[i].module_id);
 		dir_buff_caps[i].pdev_id = DP_HW2SW_MACID(dma_caps[i].pdev_id);
 		dir_buff_caps[i].min_elem = dma_caps[i].min_elem;
 		dir_buff_caps[i].min_buf_sz = dma_caps[i].min_buf_sz;
@@ -10196,7 +10167,7 @@ qwz_wmi_tlv_svc_rdy_ext_parse(struct qwz_softc *sc, uint16_t tag, uint16_t len,
     const void *ptr, void *data)
 {
 	struct qwz_pdev_wmi *wmi_handle = &sc->wmi.wmi[0];
-	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = data;
+	struct wmi_tlv_svc_rdy_ext_parse *svc_rdy_ext = (struct wmi_tlv_svc_rdy_ext_parse *)(data);
 	int ret;
 
 	switch (tag) {
@@ -10276,7 +10247,7 @@ qwz_service_ready_ext_event(struct qwz_softc *sc, struct mbuf *m)
 	struct wmi_tlv_svc_rdy_ext_parse svc_rdy_ext = { };
 	int ret;
 
-	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), m->m_pkthdr.len,
+	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), M_PKTLEN(m),
 	    qwz_wmi_tlv_svc_rdy_ext_parse, &svc_rdy_ext);
 	if (ret) {
 		printf("%s: failed to parse tlv %d\n", __func__, ret);
@@ -10297,7 +10268,7 @@ int
 qwz_wmi_tlv_svc_rdy_ext2_parse(struct qwz_softc *sc,
     uint16_t tag, uint16_t len, const void *ptr, void *data)
 {
-	struct wmi_tlv_svc_rdy_ext2_parse *parse = data;
+	struct wmi_tlv_svc_rdy_ext2_parse *parse = (struct wmi_tlv_svc_rdy_ext2_parse *)(data);
 	const struct wmi_service_ready_ext2_event *ev;
 	int ret;
 
@@ -10306,10 +10277,10 @@ qwz_wmi_tlv_svc_rdy_ext2_parse(struct qwz_softc *sc,
 		if (len < sizeof(*ev))
 			return EPROTO;
 
-		ev = ptr;
-		sc->dp.peer_metadata_ver = FIELD_GET(
+		ev = (const struct wmi_service_ready_ext2_event *)(ptr);
+		sc->dp.peer_metadata_ver = (enum peer_metadata_version)(FIELD_GET(
 		    WMI_TARGET_CAP_FLAGS_RX_PEER_METADATA_VERSION,
-		    ev->target_cap_flags);
+		    ev->target_cap_flags));
 		break;
 	case WMI_TAG_ARRAY_STRUCT:
 		if (!parse->dma_ring_cap_done) {
@@ -10334,7 +10305,7 @@ qwz_service_ready_ext2_event(struct qwz_softc *sc, struct mbuf *m)
 	struct wmi_tlv_svc_rdy_ext2_parse svc_rdy_ext2 = { };
 	int ret;
 
-	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), m->m_pkthdr.len,
+	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), M_PKTLEN(m),
 	    qwz_wmi_tlv_svc_rdy_ext2_parse, &svc_rdy_ext2);
 	if (ret) {
 		printf("%s: failed to parse ext2 event tlv %d\n",
@@ -10354,7 +10325,7 @@ qwz_service_available_event(struct qwz_softc *sc, struct mbuf *m)
 {
 	int ret;
 
-	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), m->m_pkthdr.len,
+	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), M_PKTLEN(m),
 	    qwz_wmi_tlv_services_parser, NULL);
 	if (ret)
 		printf("%s: failed to parse services available tlv %d\n",
@@ -10371,7 +10342,7 @@ qwz_pull_peer_assoc_conf_ev(struct qwz_softc *sc, struct mbuf *m,
 	const struct wmi_peer_assoc_conf_event *ev;
 	int ret;
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		ret = ENOMEM;
 		printf("%s: failed to parse tlv: %d\n",
@@ -10379,7 +10350,7 @@ qwz_pull_peer_assoc_conf_ev(struct qwz_softc *sc, struct mbuf *m,
 		return ret;
 	}
 
-	ev = tb[WMI_TAG_PEER_ASSOC_CONF_EVENT];
+	ev = (const struct wmi_peer_assoc_conf_event *)(tb[WMI_TAG_PEER_ASSOC_CONF_EVENT]);
 	if (!ev) {
 		printf("%s: failed to fetch peer assoc conf ev\n",
 		    sc->sc_dev.dv_xname);
@@ -10413,7 +10384,7 @@ int
 qwz_wmi_tlv_rdy_parse(struct qwz_softc *sc, uint16_t tag, uint16_t len,
     const void *ptr, void *data)
 {
-	struct wmi_tlv_rdy_parse *rdy_parse = data;
+	struct wmi_tlv_rdy_parse *rdy_parse = (struct wmi_tlv_rdy_parse *)(data);
 	struct wmi_ready_event fixed_param;
 	struct wmi_mac_addr *addr_list;
 	struct qwz_pdev *pdev;
@@ -10460,7 +10431,7 @@ qwz_ready_event(struct qwz_softc *sc, struct mbuf *m)
 	struct wmi_tlv_rdy_parse rdy_parse = { };
 	int ret;
 
-	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), m->m_pkthdr.len,
+	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), M_PKTLEN(m),
 	    qwz_wmi_tlv_rdy_parse, &rdy_parse);
 	if (ret) {
 		printf("%s: failed to parse tlv %d\n", __func__, ret);
@@ -10481,7 +10452,7 @@ qwz_pull_peer_del_resp_ev(struct qwz_softc *sc, struct mbuf *m,
 	const struct wmi_peer_delete_resp_event *ev;
 	int ret;
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		ret = ENOMEM;
 		printf("%s: failed to parse tlv: %d\n",
@@ -10489,7 +10460,7 @@ qwz_pull_peer_del_resp_ev(struct qwz_softc *sc, struct mbuf *m,
 		return ret;
 	}
 
-	ev = tb[WMI_TAG_PEER_DELETE_RESP_EVENT];
+	ev = (const struct wmi_peer_delete_resp_event *)(tb[WMI_TAG_PEER_DELETE_RESP_EVENT]);
 	if (!ev) {
 		printf("%s: failed to fetch peer delete resp ev\n",
 		    sc->sc_dev.dv_xname);
@@ -10557,7 +10528,7 @@ qwz_pull_vdev_start_resp_tlv(struct qwz_softc *sc, struct mbuf *m,
 	const struct wmi_vdev_start_resp_event *ev;
 	int ret;
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		ret = ENOMEM;
 		printf("%s: failed to parse tlv: %d\n",
@@ -10565,7 +10536,7 @@ qwz_pull_vdev_start_resp_tlv(struct qwz_softc *sc, struct mbuf *m,
 		return ret;
 	}
 
-	ev = tb[WMI_TAG_VDEV_START_RESPONSE_EVENT];
+	ev = (const struct wmi_vdev_start_resp_event *)(tb[WMI_TAG_VDEV_START_RESPONSE_EVENT]);
 	if (!ev) {
 		printf("%s: failed to fetch vdev start resp ev\n",
 		    sc->sc_dev.dv_xname);
@@ -10623,7 +10594,7 @@ qwz_pull_vdev_stopped_param_tlv(struct qwz_softc *sc, struct mbuf *m,
 	const struct wmi_vdev_stopped_event *ev;
 	int ret;
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		ret = ENOMEM;
 		printf("%s: failed to parse tlv: %d\n",
@@ -10631,7 +10602,7 @@ qwz_pull_vdev_stopped_param_tlv(struct qwz_softc *sc, struct mbuf *m,
 		return ret;
 	}
 
-	ev = tb[WMI_TAG_VDEV_STOPPED_EVENT];
+	ev = (const struct wmi_vdev_stopped_event *)(tb[WMI_TAG_VDEV_STOPPED_EVENT]);
 	if (!ev) {
 		printf("%s: failed to fetch vdev stop ev\n",
 		    sc->sc_dev.dv_xname);
@@ -10667,7 +10638,7 @@ int
 qwz_wmi_tlv_iter_parse(struct qwz_softc *sc, uint16_t tag, uint16_t len,
     const void *ptr, void *data)
 {
-	const void **tb = data;
+	const void **tb = (const void **)(data);
 
 	if (tag < WMI_TAG_MAX)
 		tb[tag] = ptr;
@@ -10816,14 +10787,14 @@ qwz_pull_reg_chan_list_update_ev(struct qwz_softc *sc, struct mbuf *m,
 	DNPRINTF(QWZ_D_WMI, "%s: processing regulatory channel list\n",
 	    __func__);
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		ret = ENOMEM; /* XXX allocation failure or parsing failure? */
 		printf("%s: failed to parse tlv: %d\n", __func__, ret);
 		return ENOMEM;
 	}
 
-	chan_list_event_hdr = tb[WMI_TAG_REG_CHAN_LIST_CC_EVENT];
+	chan_list_event_hdr = (const struct wmi_reg_chan_list_cc_event *)(tb[WMI_TAG_REG_CHAN_LIST_CC_EVENT]);
 	if (!chan_list_event_hdr) {
 		printf("%s: failed to fetch reg chan list update ev\n",
 		    __func__);
@@ -10853,7 +10824,7 @@ qwz_pull_reg_chan_list_update_ev(struct qwz_softc *sc, struct mbuf *m,
 	    qwz_cc_status_to_str(reg_info->status_code));
 
 	reg_info->status_code =
-		qwz_wmi_cc_setting_code_to_reg(chan_list_event_hdr->status_code);
+		qwz_wmi_cc_setting_code_to_reg((enum wmi_reg_cc_setting_code)chan_list_event_hdr->status_code);
 
 	reg_info->is_ext_reg_event = false;
 
@@ -10929,14 +10900,14 @@ qwz_pull_reg_chan_list_ext_update_ev(struct qwz_softc *sc, struct mbuf *m,
 	DNPRINTF(QWZ_D_WMI, "%s: processing regulatory ext channel list\n",
 	    __func__);
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		ret = ENOMEM; /* XXX allocation failure or parsing failure? */
 		printf("%s: failed to parse tlv: %d\n", __func__, ret);
 		return ENOMEM;
 	}
 
-	chan_list_event_hdr = tb[WMI_TAG_REG_CHAN_LIST_CC_EXT_EVENT];
+	chan_list_event_hdr = (const struct wmi_reg_chan_list_cc_ext_event *)(tb[WMI_TAG_REG_CHAN_LIST_CC_EXT_EVENT]);
 	if (!chan_list_event_hdr) {
 		printf("%s: failed to fetch reg chan list ext update ev\n",
 		    __func__);
@@ -10972,7 +10943,7 @@ qwz_pull_reg_chan_list_ext_update_ev(struct qwz_softc *sc, struct mbuf *m,
 	reg_info->ctry_code = chan_list_event_hdr->country_id;
 	reg_info->reg_dmn_pair = chan_list_event_hdr->domain_code;
 	reg_info->status_code = qwz_wmi_cc_setting_code_to_reg(
-	    chan_list_event_hdr->status_code);
+	    (enum wmi_reg_cc_setting_code)chan_list_event_hdr->status_code);
 	reg_info->is_ext_reg_event = true;
 
 	reg_info->min_bw_2ghz = chan_list_event_hdr->min_bw_2ghz;
@@ -11418,13 +11389,13 @@ qwz_pull_scan_ev(struct qwz_softc *sc, struct mbuf *m,
 	const void **tb;
 	const struct wmi_scan_event *ev;
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		DPRINTF("%s: failed to parse tlv\n", __func__);
 		return EINVAL;
 	}
 
-	ev = tb[WMI_TAG_SCAN_EVENT];
+	ev = (const struct wmi_scan_event *)(tb[WMI_TAG_SCAN_EVENT]);
 	if (!ev) {
 		DPRINTF("%s: failed to fetch scan ev\n", __func__);
 		free(tb, M_DEVBUF, WMI_TAG_MAX * sizeof(*tb));
@@ -11643,7 +11614,7 @@ qwz_pull_chan_info_ev(struct qwz_softc *sc, uint8_t *evt_buf, uint32_t len,
 		return EINVAL;
 	}
 
-	ev = tb[WMI_TAG_CHAN_INFO_EVENT];
+	ev = (const struct wmi_chan_info_event *)(tb[WMI_TAG_CHAN_INFO_EVENT]);
 	if (!ev) {
 		printf("%s: failed to fetch chan info ev\n",
 		    sc->sc_dev.dv_xname);
@@ -11678,7 +11649,7 @@ qwz_chan_info_event(struct qwz_softc *sc, struct mbuf *m)
 	/* HW channel counters frequency value in hertz */
 	uint32_t cc_freq_hz = sc->cc_freq_hz;
 
-	if (qwz_pull_chan_info_ev(sc, mtod(m, void *), m->m_pkthdr.len,
+	if (qwz_pull_chan_info_ev(sc, mtod(m, uint8_t *), M_PKTLEN(m),
 	    &ch_info_ev) != 0) {
 		printf("%s: failed to extract chan info event\n",
 		    sc->sc_dev.dv_xname);
@@ -11755,15 +11726,15 @@ int
 qwz_wmi_tlv_mgmt_rx_parse(struct qwz_softc *sc, uint16_t tag, uint16_t len,
     const void *ptr, void *data)
 {
-	struct wmi_tlv_mgmt_rx_parse *parse = data;
+	struct wmi_tlv_mgmt_rx_parse *parse = (struct wmi_tlv_mgmt_rx_parse *)(data);
 
 	switch (tag) {
 	case WMI_TAG_MGMT_RX_HDR:
-		parse->fixed = ptr;
+		parse->fixed = (const struct wmi_mgmt_rx_hdr *)(ptr);
 		break;
 	case WMI_TAG_ARRAY_BYTE:
 		if (!parse->frame_buf_done) {
-			parse->frame_buf = ptr;
+			parse->frame_buf = (const uint8_t *)(ptr);
 			parse->frame_buf_done = 1;
 		}
 		break;
@@ -11781,7 +11752,7 @@ qwz_pull_mgmt_rx_params_tlv(struct qwz_softc *sc, struct mbuf *m,
 	int ret;
 	size_t totlen, hdrlen;
 
-	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), m->m_pkthdr.len,
+	ret = qwz_wmi_tlv_iter(sc, mtod(m, void *), M_PKTLEN(m),
 	    qwz_wmi_tlv_mgmt_rx_parse, &parse);
 	if (ret) {
 		printf("%s: failed to parse mgmt rx tlv %d\n",
@@ -11803,7 +11774,7 @@ qwz_pull_mgmt_rx_params_tlv(struct qwz_softc *sc, struct mbuf *m,
 	hdr->channel = le32toh(ev->channel);
 	hdr->snr = le32toh(ev->snr);
 	hdr->rate = le32toh(ev->rate);
-	hdr->phy_mode = le32toh(ev->phy_mode);
+	hdr->phy_mode = (enum wmi_phy_mode)(le32toh(ev->phy_mode));
 	hdr->buf_len = le32toh(ev->buf_len);
 	hdr->status = le32toh(ev->status);
 	hdr->flags = le32toh(ev->flags);
@@ -11812,7 +11783,7 @@ qwz_pull_mgmt_rx_params_tlv(struct qwz_softc *sc, struct mbuf *m,
 	memcpy(hdr->rssi_ctl, ev->rssi_ctl, sizeof(hdr->rssi_ctl));
 
 	if (frame < mtod(m, uint8_t *) ||
-	    frame >= mtod(m, uint8_t *) + m->m_pkthdr.len) {
+	    frame >= mtod(m, uint8_t *) + M_PKTLEN(m)) {
 		printf("%s: invalid mgmt rx frame pointer\n",
 		    sc->sc_dev.dv_xname);
 		return EPROTO;
@@ -11825,14 +11796,14 @@ qwz_pull_mgmt_rx_params_tlv(struct qwz_softc *sc, struct mbuf *m,
 		return EPROTO;
 	}
 	totlen = hdrlen + hdr->buf_len;
-	if (m->m_pkthdr.len < totlen) {
+	if (M_PKTLEN(m) < totlen) {
 		printf("%s: invalid length in mgmt rx hdr ev\n",
 		    sc->sc_dev.dv_xname);
 		return EPROTO;
 	}
 
 	/* shift the mbuf to point at `frame` */
-	m->m_len = m->m_pkthdr.len = totlen;
+	M_SETLEN(m, totlen);
 	m_adj(m, hdrlen);
 
 #if 0 /* Not needed on OpenBSD? */
@@ -11916,7 +11887,7 @@ qwz_mgmt_rx_event(struct qwz_softc *sc, struct mbuf *m)
 
 	DNPRINTF(QWZ_D_MGMT,
 	    "%s: event mgmt rx skb %p len %d ftype %02x stype %02x\n",
-	    __func__, m, m->m_pkthdr.len,
+	    __func__, m, M_PKTLEN(m),
 	    wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK,
 	    wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK);
 
@@ -11966,7 +11937,7 @@ qwz_pull_mgmt_tx_compl_param_tlv(struct qwz_softc *sc, struct mbuf *m,
 	const struct wmi_mgmt_tx_compl_event *ev;
 	int ret = 0;
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		ret = ENOMEM;
 		printf("%s: failed to parse tlv: %d\n",
@@ -11974,7 +11945,7 @@ qwz_pull_mgmt_tx_compl_param_tlv(struct qwz_softc *sc, struct mbuf *m,
 		return ENOMEM;
 	}
 
-	ev = tb[WMI_TAG_MGMT_TX_COMPL_EVENT];
+	ev = (const struct wmi_mgmt_tx_compl_event *)(tb[WMI_TAG_MGMT_TX_COMPL_EVENT]);
 	if (!ev) {
 		printf("%s: failed to fetch mgmt tx compl ev\n",
 		    sc->sc_dev.dv_xname);
@@ -12062,7 +12033,7 @@ qwz_pull_roam_ev(struct qwz_softc *sc, struct mbuf *m,
 	const struct wmi_roam_event *ev;
 	int ret;
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		ret = ENOMEM;
 		printf("%s: failed to parse tlv: %d\n",
@@ -12070,7 +12041,7 @@ qwz_pull_roam_ev(struct qwz_softc *sc, struct mbuf *m,
 		return ret;
 	}
 
-	ev = tb[WMI_TAG_ROAM_EVENT];
+	ev = (const struct wmi_roam_event *)(tb[WMI_TAG_ROAM_EVENT]);
 	if (!ev) {
 		printf("%s: failed to fetch roam ev\n",
 		    sc->sc_dev.dv_xname);
@@ -12149,7 +12120,7 @@ qwz_pull_vdev_install_key_compl_ev(struct qwz_softc *sc, struct mbuf *m,
 	const struct wmi_vdev_install_key_compl_event *ev;
 	int ret;
 
-	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), m->m_pkthdr.len);
+	tb = qwz_wmi_tlv_parse_alloc(sc, mtod(m, void *), M_PKTLEN(m));
 	if (tb == NULL) {
 		ret = ENOMEM;
 		printf("%s: failed to parse tlv: %d\n",
@@ -12157,7 +12128,7 @@ qwz_pull_vdev_install_key_compl_ev(struct qwz_softc *sc, struct mbuf *m,
 		return ret;
 	}
 
-	ev = tb[WMI_TAG_VDEV_INSTALL_KEY_COMPLETE_EVENT];
+	ev = (const struct wmi_vdev_install_key_compl_event *)(tb[WMI_TAG_VDEV_INSTALL_KEY_COMPLETE_EVENT]);
 	if (!ev) {
 		printf("%s: failed to fetch vdev install key compl ev\n",
 		    sc->sc_dev.dv_xname);
@@ -12222,7 +12193,7 @@ qwz_wmi_tlv_op_rx(struct qwz_softc *sc, struct mbuf *m)
 	enum wmi_tlv_event_id id;
 
 	cmd_hdr = mtod(m, struct wmi_cmd_hdr *);
-	id = FIELD_GET(WMI_CMD_HDR_CMD_ID, (cmd_hdr->cmd_id));
+	id = (enum wmi_tlv_event_id)(FIELD_GET(WMI_CMD_HDR_CMD_ID, (cmd_hdr->cmd_id)));
 
 	m_adj(m, sizeof(struct wmi_cmd_hdr));
 
@@ -12447,7 +12418,7 @@ qwz_htc_reset_endpoint_states(struct qwz_htc *htc)
 		ep->service_id = ATH12K_HTC_SVC_ID_UNUSED;
 		ep->max_ep_message_len = 0;
 		ep->max_tx_queue_depth = 0;
-		ep->eid = i;
+		ep->eid = (enum ath12k_htc_ep_id)(i);
 		ep->htc = htc;
 		ep->tx_credit_flow_enabled = 1;
 	}
@@ -12539,12 +12510,12 @@ qwz_htc_alloc_mbuf(size_t payload_size)
 		MCLGET(m, M_DONTWAIT);
 	else
 		MCLGETL(m, M_DONTWAIT, size);
-	if ((m->m_flags & M_EXT) == 0) {
+	if ((M_FLAGS(m) & M_EXT) == 0) {
 		m_freem(m);
 		return NULL;
 	}
 
-	m->m_len = m->m_pkthdr.len = size;
+	M_SETLEN(m, size);
 	memset(mtod(m, void *), 0, size);
 
 	return m;
@@ -12569,7 +12540,7 @@ qwz_htc_prepare_tx_mbuf(struct qwz_htc_ep *ep, struct mbuf *m)
 
 	memset(hdr, 0, sizeof(*hdr));
 	hdr->htc_info = FIELD_PREP(HTC_HDR_ENDPOINTID, ep->eid) |
-	    FIELD_PREP(HTC_HDR_PAYLOADLEN, (m->m_pkthdr.len - sizeof(*hdr)));
+	    FIELD_PREP(HTC_HDR_PAYLOADLEN, (M_PKTLEN(m) - sizeof(*hdr)));
 
 	if (ep->tx_credit_flow_enabled)
 		hdr->htc_info |= FIELD_PREP(HTC_HDR_FLAGS,
@@ -12600,7 +12571,7 @@ qwz_htc_send(struct qwz_htc *htc, enum ath12k_htc_ep_id eid, struct mbuf *m)
 	}
 
 	if (ep->tx_credit_flow_enabled) {
-		credits = howmany(m->m_pkthdr.len, htc->target_credit_size);
+		credits = howmany(M_PKTLEN(m), htc->target_credit_size);
 #ifdef notyet
 		spin_lock_bh(&htc->tx_lock);
 #endif
@@ -12645,7 +12616,7 @@ qwz_htc_send(struct qwz_htc *htc, enum ath12k_htc_ep_id eid, struct mbuf *m)
 		int i;
 		uint8_t *p = mtod(m, uint8_t *);
 		DNPRINTF(QWZ_D_HTC, "%s message buffer:", __func__);
-		for (i = 0; i < m->m_pkthdr.len; i++) {
+		for (i = 0; i < M_PKTLEN(m); i++) {
 			DNPRINTF(QWZ_D_HTC, "%s %.2x",
 			    i % 16 == 0 ? "\n" : "", p[i]);
 		}
@@ -12722,7 +12693,7 @@ qwz_htc_connect_service(struct qwz_htc *htc,
 	}
 
 	length = sizeof(*req_msg);
-	m->m_len = m->m_pkthdr.len = sizeof(struct ath12k_htc_hdr) + length;
+	M_SETLEN(m, sizeof(struct ath12k_htc_hdr) + length);
 
 	req_msg = (struct ath12k_htc_conn_svc *)(mtod(m, uint8_t *) +
 	    sizeof(struct ath12k_htc_hdr));
@@ -12776,7 +12747,7 @@ qwz_htc_connect_service(struct qwz_htc *htc,
 	}
 
 	DNPRINTF(QWZ_D_HTC, "%s: service %s connect response status 0x%lx "
-	    "assigned ep 0x%lx\n", __func__, qwz_htc_service_name(service_id),
+	    "assigned ep 0x%lx\n", __func__, qwz_htc_service_name((enum ath12k_htc_svc_id)service_id),
 	    FIELD_GET(HTC_SVC_RESP_MSG_STATUS, resp_msg->flags_len),
 	    FIELD_GET(HTC_SVC_RESP_MSG_ENDPOINTID, resp_msg->flags_len));
 
@@ -12787,7 +12758,7 @@ qwz_htc_connect_service(struct qwz_htc *htc,
 	if (conn_resp->connect_resp_code !=
 	    ATH12K_HTC_CONN_SVC_STATUS_SUCCESS) {
 		printf("%s: HTC Service %s connect request failed: 0x%x)\n",
-		    __func__, qwz_htc_service_name(service_id),
+		    __func__, qwz_htc_service_name((enum ath12k_htc_svc_id)service_id),
 		    conn_resp->connect_resp_code);
 		return EPROTO;
 	}
@@ -12816,7 +12787,7 @@ setup:
 	    resp_msg->flags_len);
 
 	/* setup the endpoint */
-	ep->service_id = conn_req->service_id;
+	ep->service_id = (enum ath12k_htc_svc_id)(conn_req->service_id);
 	ep->max_tx_queue_depth = conn_req->max_send_queue_depth;
 	ep->max_ep_message_len = FIELD_GET(HTC_SVC_RESP_MSG_MAXMSGSIZE,
 	    resp_msg->flags_len);
@@ -12857,8 +12828,8 @@ qwz_htc_start(struct qwz_htc *htc)
 	if (!m)
 		return ENOMEM;
 
-	m->m_len = m->m_pkthdr.len = sizeof(struct ath12k_htc_hdr) +
-	    sizeof(*msg);
+	M_SETLEN(m, sizeof(struct ath12k_htc_hdr) +
+	    sizeof(*msg));
 
 	msg = (struct ath12k_htc_setup_complete_extended *)(mtod(m, uint8_t *) +
 	    sizeof(struct ath12k_htc_hdr));
@@ -13139,8 +13110,8 @@ qwz_dp_htt_htc_t2h_msg_handler(struct qwz_softc *sc, struct mbuf *m)
 {
 	struct qwz_dp *dp = &sc->dp;
 	struct htt_resp_msg *resp = mtod(m, struct htt_resp_msg *);
-	enum htt_t2h_msg_type type = FIELD_GET(HTT_T2H_MSG_TYPE,
-	    *(uint32_t *)resp);
+	enum htt_t2h_msg_type type = (enum htt_t2h_msg_type)(FIELD_GET(HTT_T2H_MSG_TYPE,
+	    *(uint32_t *)resp));
 	uint16_t peer_id;
 	uint8_t vdev_id;
 	uint8_t mac_addr[IEEE80211_ADDR_LEN];
@@ -13466,10 +13437,10 @@ qwz_dp_mon_buf_replenish(struct qwz_softc *sc,
 			MCLGET(m, M_DONTWAIT);
 		else
 			MCLGETL(m, M_DONTWAIT, size);
-		if ((m->m_flags & M_EXT) == 0)
+		if ((M_FLAGS(m) & M_EXT) == 0)
 			goto fail_free_mbuf;
 
-		m->m_len = m->m_pkthdr.len = size;
+		M_SETLEN(m, size);
 
 		idx = qwz_next_free_rxbuf_idx(buf_ring);
 		if (idx == -1)
@@ -13491,7 +13462,7 @@ qwz_dp_mon_buf_replenish(struct qwz_softc *sc,
 			goto fail_free_mbuf;
 		}
 
-		mon_buf = qwz_hal_srng_src_get_next_entry(sc, srng);
+		mon_buf = (struct hal_mon_buf_ring *)(qwz_hal_srng_src_get_next_entry(sc, srng));
 		if (!mon_buf)
 			goto fail_dma_unmap;
 
@@ -13531,7 +13502,7 @@ qwz_dp_rxbufs_replenish(struct qwz_softc *sc,
     int req_entries)
 {
 	struct qwz_dp *dp = &sc->dp;
-	TAILQ_HEAD(, ath12k_rx_desc_info) *used_list = list;
+	TAILQ_HEAD(, ath12k_rx_desc_info) *used_list = (decltype(used_list))list;
 	struct hal_srng *srng;
 	uint32_t *desc;
 	struct mbuf *m;
@@ -13588,10 +13559,10 @@ qwz_dp_rxbufs_replenish(struct qwz_softc *sc,
 			MCLGET(m, M_DONTWAIT);
 		else
 			MCLGETL(m, M_DONTWAIT, size);
-		if ((m->m_flags & M_EXT) == 0)
+		if ((M_FLAGS(m) & M_EXT) == 0)
 			goto fail_free_mbuf;
 
-		m->m_len = m->m_pkthdr.len = size;
+		M_SETLEN(m, size);
 
 		ret = bus_dmamap_load_mbuf(sc->sc_dmat, rx_desc->map, m,
 		    BUS_DMA_READ | BUS_DMA_NOWAIT);
@@ -13610,7 +13581,7 @@ qwz_dp_rxbufs_replenish(struct qwz_softc *sc,
 
 		cookie = rx_desc->cookie;
 
-		desc = qwz_hal_srng_src_get_next_entry(sc, srng);
+		desc = (uint32_t *)(qwz_hal_srng_src_get_next_entry(sc, srng));
 		if (!desc)
 			goto fail_dma_unmap;
 
@@ -14377,8 +14348,8 @@ void
 qwz_dp_tx_status_parse(struct qwz_softc *sc, struct hal_wbm_release_ring *desc,
     struct hal_tx_status *ts)
 {
-	ts->buf_rel_source = FIELD_GET(HAL_WBM_RELEASE_INFO0_REL_SRC_MODULE,
-	    desc->info0);
+	ts->buf_rel_source = (enum hal_wbm_rel_src_module)(FIELD_GET(HAL_WBM_RELEASE_INFO0_REL_SRC_MODULE,
+	    desc->info0));
 	if (ts->buf_rel_source != HAL_WBM_REL_SRC_MODULE_FW &&
 	    ts->buf_rel_source != HAL_WBM_REL_SRC_MODULE_TQM)
 		return;
@@ -14386,8 +14357,8 @@ qwz_dp_tx_status_parse(struct qwz_softc *sc, struct hal_wbm_release_ring *desc,
 	if (ts->buf_rel_source == HAL_WBM_REL_SRC_MODULE_FW)
 		return;
 
-	ts->status = FIELD_GET(HAL_WBM_RELEASE_INFO0_TQM_RELEASE_REASON,
-	    desc->info0);
+	ts->status = (enum hal_wbm_tqm_rel_reason)(FIELD_GET(HAL_WBM_RELEASE_INFO0_TQM_RELEASE_REASON,
+	    desc->info0));
 	ts->ppdu_id = FIELD_GET(HAL_WBM_RELEASE_INFO1_TQM_STATUS_NUMBER,
 	    desc->info1);
 	ts->try_cnt = FIELD_GET(HAL_WBM_RELEASE_INFO1_TRANSMIT_COUNT,
@@ -14449,10 +14420,10 @@ qwz_dp_tx_process_htt_tx_complete(struct qwz_softc *sc, void *desc,
 	struct qwz_dp_htt_wbm_tx_status ts = {0};
 	enum hal_wbm_htt_tx_comp_status wbm_status;
 
-	status_desc = desc + HTT_TX_WBM_COMP_STATUS_OFFSET;
+	status_desc = (decltype(status_desc))(((uint8_t *)desc) + HTT_TX_WBM_COMP_STATUS_OFFSET);
 
-	wbm_status = FIELD_GET(HTT_TX_WBM_COMP_INFO0_STATUS,
-	    status_desc->info0);
+	wbm_status = (enum hal_wbm_htt_tx_comp_status)(FIELD_GET(HTT_TX_WBM_COMP_INFO0_STATUS,
+	    status_desc->info0));
 
 	switch (wbm_status) {
 	case HAL_WBM_REL_HTT_TX_COMP_STATUS_OK:
@@ -14614,7 +14585,7 @@ qwz_dp_tx_completion_handler(struct qwz_softc *sc, int ring_id)
 	struct qwz_dp *dp = &sc->dp;
 	int hal_ring_id = dp->tx_ring[ring_id].tcl_comp_ring.ring_id;
 	struct hal_srng *status_ring = &sc->hal.srng_list[hal_ring_id];
-	struct hal_tx_status ts = { 0 };
+	struct hal_tx_status ts = { (enum hal_wbm_rel_src_module)(0) };
 	struct dp_tx_ring *tx_ring = &dp->tx_ring[ring_id];
 	uint32_t *desc;
 	uint32_t msdu_id;
@@ -14702,7 +14673,7 @@ void
 qwz_hal_rx_reo_ent_paddr_get(struct qwz_softc *sc, void *desc, uint64_t *paddr,
     uint32_t *desc_bank)
 {
-	struct ath12k_buffer_addr *buff_addr = desc;
+	struct ath12k_buffer_addr *buff_addr = (struct ath12k_buffer_addr *)(desc);
 
 	*paddr = ((uint64_t)(FIELD_GET(BUFFER_ADDR_INFO1_ADDR,
 	    le32toh(buff_addr->info1))) << 32) |
@@ -14719,8 +14690,8 @@ qwz_hal_desc_reo_parse_err(struct qwz_softc *sc, uint32_t *rx_desc,
 	struct hal_reo_dest_ring *desc = (struct hal_reo_dest_ring *)rx_desc;
 	enum hal_reo_dest_ring_push_reason push_reason;
 
-	push_reason = FIELD_GET(HAL_REO_DEST_RING_INFO0_PUSH_REASON,
-	    le32toh(desc->info0));
+	push_reason = (enum hal_reo_dest_ring_push_reason)(FIELD_GET(HAL_REO_DEST_RING_INFO0_PUSH_REASON,
+	    le32toh(desc->info0)));
 	if (push_reason != HAL_REO_DEST_RING_PUSH_REASON_ERR_DETECTED &&
 	    push_reason != HAL_REO_DEST_RING_PUSH_REASON_ROUTING_INSTRUCTION) {
 		printf("%s: expected error push reason code, received %d\n",
@@ -14753,8 +14724,8 @@ qwz_hal_rx_msdu_link_info_get(void *link_desc, uint32_t *num_msdus,
 	*num_msdus = HAL_NUM_RX_MSDUS_PER_LINK_DESC;
 
 	msdu = &link->msdu_link[0];
-	*rbm = FIELD_GET(BUFFER_ADDR_INFO1_RET_BUF_MGR,
-	    le32toh(msdu->buf_addr_info.info1));
+	*rbm = (enum hal_rx_buf_return_buf_manager)(FIELD_GET(BUFFER_ADDR_INFO1_RET_BUF_MGR,
+	    le32toh(msdu->buf_addr_info.info1)));
 
 	for (i = 0; i < *num_msdus; i++) {
 		msdu = &link->msdu_link[i];
@@ -14774,8 +14745,8 @@ void
 qwz_hal_rx_msdu_link_desc_set(struct qwz_softc *sc, void *desc,
     void *link_desc, enum hal_wbm_rel_bm_act action)
 {
-	struct hal_wbm_release_ring *dst_desc = desc;
-	struct hal_wbm_release_ring *src_desc = link_desc;
+	struct hal_wbm_release_ring *dst_desc = (struct hal_wbm_release_ring *)(desc);
+	struct hal_wbm_release_ring *src_desc = (struct hal_wbm_release_ring *)(link_desc);
 
 	memset(dst_desc, 0, sizeof(*dst_desc));
 	dst_desc->buf_addr_info = src_desc->buf_addr_info;
@@ -14801,7 +14772,7 @@ qwz_dp_rx_link_desc_return(struct qwz_softc *sc, uint32_t *link_desc,
 #endif
 	qwz_hal_srng_access_begin(sc, srng);
 
-	desc = qwz_hal_srng_src_get_next_entry(sc, srng);
+	desc = (uint32_t *)(qwz_hal_srng_src_get_next_entry(sc, srng));
 	if (!desc) {
 		ret = ENOBUFS;
 		goto exit;
@@ -14945,31 +14916,31 @@ int
 qwz_hal_wbm_desc_parse_err(struct qwz_softc *sc, void *desc,
     struct hal_rx_wbm_rel_info *rel_info)
 {
-	struct hal_wbm_release_ring_rx *wbm_desc = desc;
-	struct hal_wbm_release_ring_cc_rx *cc_desc = desc;
+	struct hal_wbm_release_ring_rx *wbm_desc = (struct hal_wbm_release_ring_rx *)(desc);
+	struct hal_wbm_release_ring_cc_rx *cc_desc = (struct hal_wbm_release_ring_cc_rx *)(desc);
 	enum hal_wbm_rel_desc_type type;
 	enum hal_wbm_rel_src_module rel_src;
 	enum hal_rx_buf_return_buf_manager rbm;
 	uint32_t info0 = le32toh(wbm_desc->info0);
 	uint32_t msdu_info = le32toh(wbm_desc->rx_msdu_info.info0);
 
-	type = FIELD_GET(HAL_WBM_RELEASE_INFO0_DESC_TYPE, info0);
+	type = (enum hal_wbm_rel_desc_type)(FIELD_GET(HAL_WBM_RELEASE_INFO0_DESC_TYPE, info0));
 	if (type != HAL_WBM_REL_DESC_TYPE_REL_MSDU)
 		return EINVAL;
 
-	rel_src = FIELD_GET(HAL_WBM_RELEASE_INFO0_REL_SRC_MODULE, info0);
+	rel_src = (enum hal_wbm_rel_src_module)(FIELD_GET(HAL_WBM_RELEASE_INFO0_REL_SRC_MODULE, info0));
 	if (rel_src != HAL_WBM_REL_SRC_MODULE_RXDMA &&
 	    rel_src != HAL_WBM_REL_SRC_MODULE_REO)
 		return EINVAL;
 
 	/* Cookie conversion changes both the cookie and RBM locations. */
 	if (info0 & HAL_WBM_RELEASE_RX_INFO0_CC_STATUS) {
-		rbm = FIELD_GET(HAL_WBM_RELEASE_RX_CC_INFO0_RBM, info0);
+		rbm = (enum hal_rx_buf_return_buf_manager)(FIELD_GET(HAL_WBM_RELEASE_RX_CC_INFO0_RBM, info0));
 		rel_info->cookie = FIELD_GET(HAL_WBM_RELEASE_RX_CC_INFO1_COOKIE,
 		    le32toh(cc_desc->info1));
 	} else {
-		rbm = FIELD_GET(BUFFER_ADDR_INFO1_RET_BUF_MGR,
-		    le32toh(wbm_desc->buf_addr_info.info1));
+		rbm = (enum hal_rx_buf_return_buf_manager)(FIELD_GET(BUFFER_ADDR_INFO1_RET_BUF_MGR,
+		    le32toh(wbm_desc->buf_addr_info.info1)));
 		rel_info->cookie = FIELD_GET(BUFFER_ADDR_INFO1_SW_COOKIE,
 		    le32toh(wbm_desc->buf_addr_info.info1));
 	}
@@ -14979,13 +14950,13 @@ qwz_hal_wbm_desc_parse_err(struct qwz_softc *sc, void *desc,
 
 	rel_info->err_rel_src = rel_src;
 	if (rel_src == HAL_WBM_REL_SRC_MODULE_REO) {
-		rel_info->push_reason = FIELD_GET(
-		    HAL_WBM_RELEASE_INFO0_REO_PUSH_REASON, info0);
+		rel_info->push_reason = (enum hal_reo_dest_ring_push_reason)(FIELD_GET(
+		    HAL_WBM_RELEASE_INFO0_REO_PUSH_REASON, info0));
 		rel_info->err_code = FIELD_GET(
 		    HAL_WBM_RELEASE_INFO0_REO_ERROR_CODE, info0);
 	} else {
-		rel_info->push_reason = FIELD_GET(
-		    HAL_WBM_RELEASE_INFO0_RXDMA_PUSH_REASON, info0);
+		rel_info->push_reason = (enum hal_reo_dest_ring_push_reason)(FIELD_GET(
+		    HAL_WBM_RELEASE_INFO0_RXDMA_PUSH_REASON, info0));
 		rel_info->err_code = FIELD_GET(
 		    HAL_WBM_RELEASE_INFO0_RXDMA_ERROR_CODE, info0);
 	}
@@ -15255,7 +15226,7 @@ qwz_dp_rx_h_undecap_nwifi(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 	if (m == NULL)
 		return ENOBUFS;
 
-	if (m->m_len < sizeof(*wh) &&
+	if (M_LEN(m) < sizeof(*wh) &&
 	    (m = m_pullup(m, sizeof(*wh))) == NULL) {
 		msdu->m = NULL;
 		return ENOBUFS;
@@ -15272,7 +15243,7 @@ qwz_dp_rx_h_undecap_nwifi(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 	if (hdrlen > sizeof(decap_hdr))
 		return EINVAL;
 
-	if (m->m_len < hdrlen &&
+	if (M_LEN(m) < hdrlen &&
 	    (m = m_pullup(m, hdrlen)) == NULL) {
 		msdu->m = NULL;
 		return ENOBUFS;
@@ -15375,7 +15346,7 @@ qwz_dp_rx_h_enctype(struct qwz_softc *sc, struct hal_rx_desc *desc)
 	if (!sc->hal_rx_ops->rx_desc_encrypt_valid(desc))
 		return HAL_ENCRYPT_TYPE_OPEN;
 
-	return sc->hal_rx_ops->rx_desc_get_encrypt_type(desc);
+	return (enum hal_encrypt_type)sc->hal_rx_ops->rx_desc_get_encrypt_type(desc);
 }
 
 static inline uint8_t
@@ -15397,7 +15368,7 @@ qwz_dp_rx_h_undecap_eth(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 	uint8_t *p;
 	struct mbuf *m = msdu->m;
 
-	if (m->m_pkthdr.len < ETHER_HDR_LEN)
+	if (M_PKTLEN(m) < ETHER_HDR_LEN)
 		return EINVAL;
 
 	eth = mtod(m, struct ether_header *);
@@ -15484,7 +15455,7 @@ qwz_dp_rx_h_undecap(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 		return ret;
 
 	wh = mtod(msdu->m, struct ieee80211_frame *);
-	if (msdu->m->m_len < ieee80211_get_hdrlen(wh))
+	if (M_LEN(msdu->m) < ieee80211_get_hdrlen(wh))
 		return EINVAL;
 	if (ieee80211_has_qos(wh)) {
 		if (ieee80211_has_addr4(wh))
@@ -15525,9 +15496,9 @@ qwz_dp_rx_h_mpdu(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 	peer = qwz_peer_find_by_id(sc, msdu->peer_id);
 	if (peer) {
 		if (msdu->is_mcbc)
-			enctype = peer->sec_type_grp;
+			enctype = (enum hal_encrypt_type)(peer->sec_type_grp);
 		else
-			enctype = peer->sec_type;
+			enctype = (enum hal_encrypt_type)(peer->sec_type);
 	} else
 		enctype = qwz_dp_rx_h_enctype(sc, rx_desc);
 
@@ -15638,7 +15609,7 @@ qwz_dp_rx_process_msdu(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 
 	if (msdu->is_frag) {
 		m_adj(msdu->m, hal_rx_desc_sz);
-		msdu->m->m_len = msdu->m->m_pkthdr.len = msdu_len;
+		M_SETLEN(msdu->m, msdu_len);
 	} else if (!msdu->is_continuation) {
 		if (msdu_len + hal_rx_desc_sz + l3_pad_bytes >
 		    DP_RX_BUFFER_SIZE) {
@@ -15658,7 +15629,7 @@ qwz_dp_rx_process_msdu(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 			return EINVAL;
 		}
 		m_adj(msdu->m, hal_rx_desc_sz + l3_pad_bytes);
-		msdu->m->m_len = msdu->m->m_pkthdr.len = msdu_len;
+		M_SETLEN(msdu->m, msdu_len);
 	} else {
 		ret = qwz_dp_rx_msdu_coalesce(sc, msdu_list, msdu, last_buf,
 		    l3_pad_bytes, msdu_len);
@@ -15871,8 +15842,8 @@ try_again:
 
 		TAILQ_INSERT_TAIL(&rx_desc_used_list, desc_info, entry);
 
-		push_reason = FIELD_GET(HAL_REO_DEST_RING_INFO0_PUSH_REASON,
-		    desc->info0);
+		push_reason = (enum hal_reo_dest_ring_push_reason)(FIELD_GET(HAL_REO_DEST_RING_INFO0_PUSH_REASON,
+		    desc->info0));
 		if (push_reason !=
 		    HAL_REO_DEST_RING_PUSH_REASON_ROUTING_INSTRUCTION) {
 			m_freem(m);
@@ -15950,10 +15921,10 @@ qwz_dp_rx_alloc_mon_status_buf(struct qwz_softc *sc,
 		MCLGET(m, M_DONTWAIT);
 	else
 		MCLGETL(m, M_DONTWAIT, size);
-	if ((m->m_flags & M_EXT) == 0)
+	if ((M_FLAGS(m) & M_EXT) == 0)
 		goto fail_free_mbuf;
 
-	m->m_len = m->m_pkthdr.len = size;
+	M_SETLEN(m, size);
 	idx = qwz_next_free_rxbuf_idx(rx_ring);
 	if (idx == -1)
 		goto fail_free_mbuf;
@@ -16040,7 +16011,7 @@ qwz_dp_rx_reap_mon_status_ring(struct qwz_softc *sc, int mac_id,
 			rx_data = &rx_ring->rx_data[buf_idx];
 
 			bus_dmamap_sync(sc->sc_dmat, rx_data->map, 0,
-			    rx_data->m->m_pkthdr.len, BUS_DMASYNC_POSTREAD);
+			    M_PKTLEN(rx_data->m), BUS_DMASYNC_POSTREAD);
 
 			tlv = mtod(rx_data->m, struct hal_tlv_hdr *);
 			if (FIELD_GET(HAL_TLV_HDR_TAG, tlv->tl) !=
@@ -16247,7 +16218,7 @@ qwz_dp_hal_rx_desc_init(struct qwz_softc *sc)
 void
 qwz_dp_service_mon_ring(void *arg)
 {
-	struct qwz_softc *sc = arg;
+	struct qwz_softc *sc = (struct qwz_softc *)(arg);
 	int i;
 
 	for (i = 0; i < sc->hw_params.num_rxmda_per_pdev; i++)
@@ -16357,8 +16328,8 @@ qwz_hal_reo_status_queue_stats(struct qwz_softc *sc, uint32_t *reo_desc,
 	    FIELD_GET(HAL_REO_STATUS_HDR_INFO0_STATUS_NUM,
 	    le32toh(desc->hdr.info0));
 	status->uniform_hdr.cmd_status =
-	    FIELD_GET(HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS,
-	    le32toh(desc->hdr.info0));
+	    (enum hal_reo_cmd_status)(FIELD_GET(HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS,
+	    le32toh(desc->hdr.info0)));
 #if 0
 	ath12k_dbg(ab, ATH12K_DBG_HAL, "Queue stats status:\n");
 	ath12k_dbg(ab, ATH12K_DBG_HAL, "header: cmd_num %d status %d\n",
@@ -16423,8 +16394,8 @@ qwz_hal_reo_flush_queue_status(struct qwz_softc *sc, uint32_t *reo_desc,
 
 	status->uniform_hdr.cmd_num = FIELD_GET(
 	   HAL_REO_STATUS_HDR_INFO0_STATUS_NUM, le32toh(desc->hdr.info0));
-	status->uniform_hdr.cmd_status = FIELD_GET(
-	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0));
+	status->uniform_hdr.cmd_status = (enum hal_reo_cmd_status)(FIELD_GET(
+	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0)));
 	status->u.flush_queue.err_detected = FIELD_GET(
 	    HAL_REO_FLUSH_QUEUE_INFO0_ERR_DETECTED, le32toh(desc->info0));
 }
@@ -16440,14 +16411,14 @@ qwz_hal_reo_flush_cache_status(struct qwz_softc *sc, uint32_t *reo_desc,
 
 	status->uniform_hdr.cmd_num = FIELD_GET(
 	    HAL_REO_STATUS_HDR_INFO0_STATUS_NUM, le32toh(desc->hdr.info0));
-	status->uniform_hdr.cmd_status = FIELD_GET(
-	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0));
+	status->uniform_hdr.cmd_status = (enum hal_reo_cmd_status)(FIELD_GET(
+	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0)));
 
 	status->u.flush_cache.err_detected = FIELD_GET(
 	    HAL_REO_FLUSH_CACHE_STATUS_INFO0_IS_ERR, le32toh(desc->info0));
-	status->u.flush_cache.err_code = FIELD_GET(
+	status->u.flush_cache.err_code = (enum hal_reo_status_flush_cache_err_code)(FIELD_GET(
 	    HAL_REO_FLUSH_CACHE_STATUS_INFO0_BLOCK_ERR_CODE,
-	    le32toh(desc->info0));
+	    le32toh(desc->info0)));
 	if (!status->u.flush_cache.err_code)
 		hal->avail_blk_resource |= BIT(hal->current_blk_index);
 
@@ -16480,13 +16451,13 @@ qwz_hal_reo_unblk_cache_status(struct qwz_softc *sc, uint32_t *reo_desc,
 
 	status->uniform_hdr.cmd_num = FIELD_GET(
 	    HAL_REO_STATUS_HDR_INFO0_STATUS_NUM, le32toh(desc->hdr.info0));
-	status->uniform_hdr.cmd_status = FIELD_GET(
-	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0));
+	status->uniform_hdr.cmd_status = (enum hal_reo_cmd_status)(FIELD_GET(
+	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0)));
 
 	status->u.unblock_cache.err_detected = FIELD_GET(
 	    HAL_REO_UNBLOCK_CACHE_STATUS_INFO0_IS_ERR, le32toh(desc->info0));
-	status->u.unblock_cache.unblock_type = FIELD_GET(
-	    HAL_REO_UNBLOCK_CACHE_STATUS_INFO0_TYPE, le32toh(desc->info0));
+	status->u.unblock_cache.unblock_type = (enum hal_reo_status_unblock_cache_type)(FIELD_GET(
+	    HAL_REO_UNBLOCK_CACHE_STATUS_INFO0_TYPE, le32toh(desc->info0)));
 
 	if (!status->u.unblock_cache.err_detected &&
 	    status->u.unblock_cache.unblock_type ==
@@ -16504,8 +16475,8 @@ qwz_hal_reo_flush_timeout_list_status(struct qwz_softc *ab, uint32_t *reo_desc,
 
 	status->uniform_hdr.cmd_num = FIELD_GET(
 	    HAL_REO_STATUS_HDR_INFO0_STATUS_NUM, le32toh(desc->hdr.info0));
-	status->uniform_hdr.cmd_status = FIELD_GET(
-	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0));
+	status->uniform_hdr.cmd_status = (enum hal_reo_cmd_status)(FIELD_GET(
+	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0)));
 
 	status->u.timeout_list.err_detected = FIELD_GET(
 	    HAL_REO_FLUSH_TIMEOUT_STATUS_INFO0_IS_ERR, le32toh(desc->info0));
@@ -16531,12 +16502,12 @@ qwz_hal_reo_desc_thresh_reached_status(struct qwz_softc *sc, uint32_t *reo_desc,
 
 	status->uniform_hdr.cmd_num = FIELD_GET(
 	    HAL_REO_STATUS_HDR_INFO0_STATUS_NUM, le32toh(desc->hdr.info0));
-	status->uniform_hdr.cmd_status = FIELD_GET(
-	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0));
+	status->uniform_hdr.cmd_status = (enum hal_reo_cmd_status)(FIELD_GET(
+	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->hdr.info0)));
 
-	status->u.desc_thresh_reached.threshold_idx = FIELD_GET(
+	status->u.desc_thresh_reached.threshold_idx = (enum hal_reo_threshold_idx)(FIELD_GET(
 	    HAL_REO_DESC_THRESH_STATUS_INFO0_THRESH_INDEX,
-	    le32toh(desc->info0));
+	    le32toh(desc->info0)));
 
 	status->u.desc_thresh_reached.link_desc_counter0 = FIELD_GET(
 	    HAL_REO_DESC_THRESH_STATUS_INFO1_LINK_DESC_COUNTER0,
@@ -16565,8 +16536,8 @@ qwz_hal_reo_update_rx_reo_queue_status(struct qwz_softc *ab, uint32_t *reo_desc,
 
 	status->uniform_hdr.cmd_num = FIELD_GET(
 	    HAL_REO_STATUS_HDR_INFO0_STATUS_NUM, le32toh(desc->info0));
-	status->uniform_hdr.cmd_status = FIELD_GET(
-	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->info0));
+	status->uniform_hdr.cmd_status = (enum hal_reo_cmd_status)(FIELD_GET(
+	    HAL_REO_STATUS_HDR_INFO0_EXEC_STATUS, le32toh(desc->info0)));
 }
 
 int
@@ -17031,13 +17002,13 @@ qwz_wmi_send_scan_chan_list_cmd(struct qwz_softc *sc, uint8_t pdev_id,
 		    sizeof(*cmd));
 
 		len = sizeof(*chan_info) * num_send_chans;
-		tlv = ptr;
+		tlv = (struct wmi_tlv *)(ptr);
 		tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 		    FIELD_PREP(WMI_TLV_LEN, len - TLV_HDR_SIZE);
-		ptr += TLV_HDR_SIZE;
+		ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 
 		for (i = 0; i < num_send_chans; ++i) {
-			chan_info = ptr;
+			chan_info = (struct wmi_channel *)(ptr);
 			memset(chan_info, 0, sizeof(*chan_info));
 			len = sizeof(*chan_info);
 			chan_info->tlv_header = FIELD_PREP(WMI_TLV_TAG,
@@ -17086,7 +17057,7 @@ qwz_wmi_send_scan_chan_list_cmd(struct qwz_softc *sc, uint8_t pdev_id,
 			    "chan[%d] = %u, chan_info->info %8x\n",
 			    __func__, i, chan_info->mhz, chan_info->info);
 
-			ptr += sizeof(*chan_info);
+			ptr = (uint8_t *)ptr + sizeof(*chan_info);
 
 			tchan_info++;
 		}
@@ -17284,7 +17255,7 @@ qwz_wmi_send_scan_start_cmd(struct qwz_softc *sc,
 	ptr = (void *)(mtod(m, uint8_t *) + sizeof(struct ath12k_htc_hdr) +
 	    sizeof(struct wmi_cmd_hdr));
 
-	cmd = ptr;
+	cmd = (struct wmi_start_scan_cmd *)(ptr);
 	cmd->tlv_header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_START_SCAN_CMD) |
 	    FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
 
@@ -17315,30 +17286,30 @@ qwz_wmi_send_scan_start_cmd(struct qwz_softc *sc,
 	cmd->ie_len = params->extraie.len;
 	cmd->n_probes = params->n_probes;
 
-	ptr += sizeof(*cmd);
+	ptr = (uint8_t *)ptr + sizeof(*cmd);
 
 	len = params->num_chan * sizeof(uint32_t);
 
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_UINT32) |
 	    FIELD_PREP(WMI_TLV_LEN, len);
-	ptr += TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 	tmp_ptr = (uint32_t *)ptr;
 
 	for (i = 0; i < params->num_chan; ++i)
 		tmp_ptr[i] = params->chan_list[i];
 
-	ptr += len;
+	ptr = (uint8_t *)ptr + len;
 
 	len = params->num_ssids * sizeof(*ssid);
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_FIXED_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, len);
 
-	ptr += TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 
 	if (params->num_ssids) {
-		ssid = ptr;
+		ssid = (struct wmi_ssid *)(ptr);
 		for (i = 0; i < params->num_ssids; ++i) {
 			ssid->ssid_len = params->ssid[i].length;
 			memcpy(ssid->ssid, params->ssid[i].ssid,
@@ -17347,14 +17318,14 @@ qwz_wmi_send_scan_start_cmd(struct qwz_softc *sc,
 		}
 	}
 
-	ptr += (params->num_ssids * sizeof(*ssid));
+	ptr = (uint8_t *)ptr + (params->num_ssids * sizeof(*ssid));
 	len = params->num_bssid * sizeof(*bssid);
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_FIXED_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, len);
 
-	ptr += TLV_HDR_SIZE;
-	bssid = ptr;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
+	bssid = (struct wmi_mac_addr *)(ptr);
 
 	if (params->num_bssid) {
 		for (i = 0; i < params->num_bssid; ++i) {
@@ -17364,43 +17335,43 @@ qwz_wmi_send_scan_start_cmd(struct qwz_softc *sc,
 		}
 	}
 
-	ptr += params->num_bssid * sizeof(*bssid);
+	ptr = (uint8_t *)ptr + params->num_bssid * sizeof(*bssid);
 
 	len = extraie_len_with_pad;
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_BYTE) |
 	    FIELD_PREP(WMI_TLV_LEN, len);
-	ptr += TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 
 	if (extraie_len_with_pad)
 		memcpy(ptr, params->extraie.ptr, params->extraie.len);
 
-	ptr += extraie_len_with_pad;
+	ptr = (uint8_t *)ptr + extraie_len_with_pad;
 
 	if (params->num_hint_s_ssid) {
 		len = params->num_hint_s_ssid * sizeof(struct hint_short_ssid);
-		tlv = ptr;
+		tlv = (struct wmi_tlv *)(ptr);
 		tlv->header = FIELD_PREP(WMI_TLV_TAG,
 		    WMI_TAG_ARRAY_FIXED_STRUCT) |
 		    FIELD_PREP(WMI_TLV_LEN, len);
-		ptr += TLV_HDR_SIZE;
-		s_ssid = ptr;
+		ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
+		s_ssid = (struct hint_short_ssid *)(ptr);
 		for (i = 0; i < params->num_hint_s_ssid; ++i) {
 			s_ssid->freq_flags = params->hint_s_ssid[i].freq_flags;
 			s_ssid->short_ssid = params->hint_s_ssid[i].short_ssid;
 			s_ssid++;
 		}
-		ptr += len;
+		ptr = (uint8_t *)ptr + len;
 	}
 
 	if (params->num_hint_bssid) {
 		len = params->num_hint_bssid * sizeof(struct hint_bssid);
-		tlv = ptr;
+		tlv = (struct wmi_tlv *)(ptr);
 		tlv->header = FIELD_PREP(WMI_TLV_TAG,
 		    WMI_TAG_ARRAY_FIXED_STRUCT) |
 		    FIELD_PREP(WMI_TLV_LEN, len);
-		ptr += TLV_HDR_SIZE;
-		hint_bssid = ptr;
+		ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
+		hint_bssid = (struct hint_bssid *)(ptr);
 		for (i = 0; i < params->num_hint_bssid; ++i) {
 			hint_bssid->freq_flags =
 				params->hint_bssid[i].freq_flags;
@@ -17507,7 +17478,7 @@ qwz_wmi_send_peer_create_cmd(struct qwz_softc *sc, uint8_t pdev_id,
 
 	ptr = (void *)(mtod(m, uint8_t *) + sizeof(struct ath12k_htc_hdr) +
 	    sizeof(struct wmi_cmd_hdr));
-	cmd = ptr;
+	cmd = (struct wmi_peer_create_cmd *)(ptr);
 	cmd->tlv_header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_PEER_CREATE_CMD) |
 	    FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
 
@@ -17516,11 +17487,11 @@ qwz_wmi_send_peer_create_cmd(struct qwz_softc *sc, uint8_t pdev_id,
 	cmd->vdev_id = param->vdev_id;
 
 	ptr = (uint8_t *)ptr + sizeof(*cmd);
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, sizeof(*ml_param));
 	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
-	ml_param = ptr;
+	ml_param = (struct wmi_peer_create_mlo_params *)(ptr);
 	ml_param->tlv_header =
 	    FIELD_PREP(WMI_TLV_TAG, WMI_TAG_MLO_PEER_CREATE_PARAMS) |
 	    FIELD_PREP(WMI_TLV_LEN, sizeof(*ml_param) - TLV_HDR_SIZE);
@@ -17765,7 +17736,7 @@ qwz_wmi_send_peer_assoc_cmd(struct qwz_softc *sc, uint8_t pdev_id,
 	ptr = (void *)(mtod(m, uint8_t *) + sizeof(struct ath12k_htc_hdr) +
 	    sizeof(struct wmi_cmd_hdr));
 
-	cmd = ptr;
+	cmd = (struct wmi_peer_assoc_complete_cmd *)(ptr);
 	cmd->tlv_header = FIELD_PREP(WMI_TLV_TAG,
 	    WMI_TAG_PEER_ASSOC_COMPLETE_CMD) |
 	    FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
@@ -17801,33 +17772,33 @@ qwz_wmi_send_peer_assoc_cmd(struct qwz_softc *sc, uint8_t pdev_id,
 	       sizeof(param->peer_ppet));
 
 	/* Update peer legacy rate information */
-	ptr += sizeof(*cmd);
+	ptr = (uint8_t *)ptr + sizeof(*cmd);
 
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_BYTE) |
 	    FIELD_PREP(WMI_TLV_LEN, peer_legacy_rates_align);
 
-	ptr += TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 
 	cmd->num_peer_legacy_rates = param->peer_legacy_rates.num_rates;
 	memcpy(ptr, param->peer_legacy_rates.rates,
 	    param->peer_legacy_rates.num_rates);
 
 	/* Update peer HT rate information */
-	ptr += peer_legacy_rates_align;
+	ptr = (uint8_t *)ptr + peer_legacy_rates_align;
 
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_BYTE) |
 	    FIELD_PREP(WMI_TLV_LEN, peer_ht_rates_align);
-	ptr += TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 	cmd->num_peer_ht_rates = param->peer_ht_rates.num_rates;
 	memcpy(ptr, param->peer_ht_rates.rates,
 	    param->peer_ht_rates.num_rates);
 
 	/* VHT Rates */
-	ptr += peer_ht_rates_align;
+	ptr = (uint8_t *)ptr + peer_ht_rates_align;
 
-	mcs = ptr;
+	mcs = (struct wmi_vht_rate_set *)(ptr);
 
 	mcs->tlv_header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_VHT_RATE_SET) |
 	    FIELD_PREP(WMI_TLV_LEN, sizeof(*mcs) - TLV_HDR_SIZE);
@@ -17849,25 +17820,25 @@ qwz_wmi_send_peer_assoc_cmd(struct qwz_softc *sc, uint8_t pdev_id,
 	cmd->peer_he_mcs = param->peer_he_mcs_count;
 	cmd->min_data_rate = param->min_data_rate;
 
-	ptr += sizeof(*mcs);
+	ptr = (uint8_t *)ptr + sizeof(*mcs);
 
 	len = param->peer_he_mcs_count * sizeof(*he_mcs);
 
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, len);
-	ptr += TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 
 	/* Loop through the HE rate set */
 	for (i = 0; i < param->peer_he_mcs_count; i++) {
-		he_mcs = ptr;
+		he_mcs = (struct wmi_he_rate_set *)(ptr);
 		he_mcs->tlv_header = FIELD_PREP(WMI_TLV_TAG,
 		    WMI_TAG_HE_RATE_SET) |
 		    FIELD_PREP(WMI_TLV_LEN, sizeof(*he_mcs) - TLV_HDR_SIZE);
 
 		he_mcs->rx_mcs_set = param->peer_he_tx_mcs_set[i];
 		he_mcs->tx_mcs_set = param->peer_he_rx_mcs_set[i];
-		ptr += sizeof(*he_mcs);
+		ptr = (uint8_t *)ptr + sizeof(*he_mcs);
 	}
 
 	/*
@@ -17877,20 +17848,20 @@ qwz_wmi_send_peer_assoc_cmd(struct qwz_softc *sc, uint8_t pdev_id,
 	 * Without these the FW walks past our buffer end and crashes in
 	 * dlpager.  Mirror of Linux ath12k_wmi_send_peer_assoc_cmd().
 	 */
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, 0);	/* ML params */
-	ptr += TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, 0);	/* EHT rate set */
-	ptr += TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, 0);	/* ML partner info */
-	ptr += TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 
 	ret = qwz_wmi_cmd_send(wmi, m, WMI_PEER_ASSOC_CMDID);
 	if (ret) {
@@ -18014,15 +17985,15 @@ qwz_init_cmd_send(struct qwz_pdev_wmi *wmi, struct wmi_init_cmd_arg *param)
 
 	ptr = mtod(m, uint8_t *) + sizeof(struct ath12k_htc_hdr) +
 	   sizeof(struct wmi_cmd_hdr) + sizeof(*cmd);
-	cfg = ptr;
+	cfg = (struct wmi_resource_config *)(ptr);
 
 	qwz_wmi_copy_resource_config(cfg, &param->res_cfg);
 
 	cfg->tlv_header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_RESOURCE_CONFIG) |
 	    FIELD_PREP(WMI_TLV_LEN, sizeof(*cfg) - TLV_HDR_SIZE);
 
-	ptr += sizeof(*cfg);
-	host_mem_chunks = ptr + TLV_HDR_SIZE;
+	ptr = (uint8_t *)ptr + sizeof(*cfg);
+	host_mem_chunks = (decltype(host_mem_chunks))(((uint8_t *)ptr) + TLV_HDR_SIZE);
 	len = sizeof(struct wlan_host_mem_chunk);
 
 	for (idx = 0; idx < param->num_mem_chunks; ++idx) {
@@ -18044,10 +18015,10 @@ qwz_init_cmd_send(struct qwz_pdev_wmi *wmi, struct wmi_init_cmd_arg *param)
 	len = sizeof(struct wlan_host_mem_chunk) * param->num_mem_chunks;
 
 	/* num_mem_chunks is zero */
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, len);
-	ptr += TLV_HDR_SIZE + len;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE + len;
 
 	if (param->hw_mode_id != WMI_HOST_HW_MODE_MAX) {
 		hw_mode = (struct wmi_pdev_set_hw_mode_cmd_param *)ptr;
@@ -18058,18 +18029,18 @@ qwz_init_cmd_send(struct qwz_pdev_wmi *wmi, struct wmi_init_cmd_arg *param)
 		hw_mode->hw_mode_index = param->hw_mode_id;
 		hw_mode->num_band_to_mac = param->num_band_to_mac;
 
-		ptr += sizeof(*hw_mode);
+		ptr = (uint8_t *)ptr + sizeof(*hw_mode);
 
 		len = param->num_band_to_mac * sizeof(*band_to_mac);
-		tlv = ptr;
+		tlv = (struct wmi_tlv *)(ptr);
 		tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 		    FIELD_PREP(WMI_TLV_LEN, len);
 
-		ptr += TLV_HDR_SIZE;
+		ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
 		len = sizeof(*band_to_mac);
 
 		for (idx = 0; idx < param->num_band_to_mac; idx++) {
-			band_to_mac = (void *)ptr;
+			band_to_mac = (struct wmi_pdev_band_to_mac *)((void *)ptr);
 
 			band_to_mac->tlv_header = FIELD_PREP(WMI_TLV_TAG,
 			    WMI_TAG_PDEV_BAND_TO_MAC) |
@@ -18079,7 +18050,7 @@ qwz_init_cmd_send(struct qwz_pdev_wmi *wmi, struct wmi_init_cmd_arg *param)
 			    param->band_to_mac[idx].start_freq;
 			band_to_mac->end_freq =
 			    param->band_to_mac[idx].end_freq;
-			ptr += sizeof(*band_to_mac);
+			ptr = (uint8_t *)ptr + sizeof(*band_to_mac);
 		}
 	}
 
@@ -18250,8 +18221,8 @@ qwz_wmi_mgmt_send(struct qwz_softc *sc, struct qwz_vif *arvif, uint8_t pdev_id,
 
 	paddr = tx_data->map->dm_segs[0].ds_addr;
 
-	buf_len = frame->m_pkthdr.len < WMI_MGMT_SEND_DOWNLD_LEN ?
-	    frame->m_pkthdr.len : WMI_MGMT_SEND_DOWNLD_LEN;
+	buf_len = M_PKTLEN(frame) < WMI_MGMT_SEND_DOWNLD_LEN ?
+	    M_PKTLEN(frame) : WMI_MGMT_SEND_DOWNLD_LEN;
 
 	buf_len_aligned = roundup(buf_len, sizeof(uint32_t));
 
@@ -18270,7 +18241,7 @@ qwz_wmi_mgmt_send(struct qwz_softc *sc, struct qwz_vif *arvif, uint8_t pdev_id,
 	cmd->chanfreq = 0;
 	cmd->paddr_lo = paddr & 0xffffffff;
 	cmd->paddr_hi = paddr >> 32;
-	cmd->frame_len = frame->m_pkthdr.len;
+	cmd->frame_len = M_PKTLEN(frame);
 	cmd->buf_len = buf_len;
 	cmd->tx_params_valid = 0;
 
@@ -18345,12 +18316,12 @@ qwz_wmi_vdev_create(struct qwz_softc *sc, uint8_t *macaddr,
 	    sizeof(*cmd));
 	len = WMI_NUM_SUPPORTED_BAND_MAX * sizeof(*txrx_streams);
 
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, len);
 
-	ptr += TLV_HDR_SIZE;
-	txrx_streams = ptr;
+	ptr = (uint8_t *)ptr + TLV_HDR_SIZE;
+	txrx_streams = (struct wmi_vdev_txrx_streams *)(ptr);
 	len = sizeof(*txrx_streams);
 	txrx_streams->tlv_header =
 	    FIELD_PREP(WMI_TLV_TAG, WMI_TAG_VDEV_TXRX_STREAMS) |
@@ -18653,17 +18624,17 @@ qwz_wmi_vdev_start(struct qwz_softc *sc, struct wmi_vdev_start_req_arg *arg,
 	if (test_bit(ATH12K_FLAG_HW_CRYPTO_DISABLED, sc->sc_flags))
 		cmd->flags |= WMI_VDEV_START_HW_ENCRYPTION_DISABLED;
 
-	ptr = mtod(m, void *) + sizeof(struct ath12k_htc_hdr) +
+	ptr = mtod(m, uint8_t *) + sizeof(struct ath12k_htc_hdr) +
 	    sizeof(struct wmi_cmd_hdr) + sizeof(*cmd);
-	chan = ptr;
+	chan = (struct wmi_channel *)(ptr);
 
 	qwz_wmi_put_wmi_channel(chan, arg);
 
 	chan->tlv_header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_CHANNEL) |
 	    FIELD_PREP(WMI_TLV_LEN, sizeof(*chan) - TLV_HDR_SIZE);
-	ptr += sizeof(*chan);
+	ptr = (uint8_t *)ptr + sizeof(*chan);
 
-	tlv = ptr;
+	tlv = (struct wmi_tlv *)(ptr);
 	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_STRUCT) |
 	    FIELD_PREP(WMI_TLV_LEN, 0);
 
@@ -18671,7 +18642,7 @@ qwz_wmi_vdev_start(struct qwz_softc *sc, struct wmi_vdev_start_req_arg *arg,
 	 * [wmi_tlv][wmi_p2p_noa_descriptor][wmi_tlv]..
 	 */
 
-	ptr += sizeof(*tlv);
+	ptr = (uint8_t *)ptr + sizeof(*tlv);
 
 	ret = qwz_wmi_cmd_send(wmi, m, restart ?
 	    WMI_VDEV_RESTART_REQUEST_CMDID : WMI_VDEV_START_REQUEST_CMDID);
@@ -19643,7 +19614,7 @@ qwz_hal_srng_shadow_config(struct qwz_softc *sc)
 			continue;
 
 		for (ring_num = 0; ring_num < cfg->max_rings; ring_num++) {
-			qwz_hal_srng_update_shadow_config(sc, ring_type,
+			qwz_hal_srng_update_shadow_config(sc, (enum hal_ring_type)ring_type,
 			    ring_num);
 		}
 	}
@@ -19676,7 +19647,7 @@ qwz_hal_alloc_cont_rdp(struct qwz_softc *sc)
 	} else
 		memset(QWZ_DMA_KVA(hal->rdpmem), 0, size);
 
-	hal->rdp.vaddr = QWZ_DMA_KVA(hal->rdpmem);
+	hal->rdp.vaddr = (uint32_t *)(QWZ_DMA_KVA(hal->rdpmem));
 	hal->rdp.paddr = QWZ_DMA_DVA(hal->rdpmem);
 	return 0;
 }
@@ -19713,7 +19684,7 @@ qwz_hal_alloc_cont_wrp(struct qwz_softc *sc)
 	} else
 		memset(QWZ_DMA_KVA(hal->wrpmem), 0, size);
 
-	hal->wrp.vaddr = QWZ_DMA_KVA(hal->wrpmem);
+	hal->wrp.vaddr = (uint32_t *)(QWZ_DMA_KVA(hal->wrpmem));
 	hal->wrp.paddr = QWZ_DMA_DVA(hal->wrpmem);
 	return 0;
 }
@@ -20067,7 +20038,7 @@ qwz_hal_srng_setup(struct qwz_softc *sc, enum hal_ring_type type,
 		srng->u.src_ring.hp = 0;
 		srng->u.src_ring.cached_tp = 0;
 		srng->u.src_ring.reap_hp = srng->ring_size - srng->entry_size;
-		srng->u.src_ring.tp_addr = (void *)(hal->rdp.vaddr + ring_id);
+		srng->u.src_ring.tp_addr = (uint32_t *)((void *)(hal->rdp.vaddr + ring_id));
 		srng->u.src_ring.low_threshold = params->low_threshold *
 		    srng->entry_size;
 		if (srng_config->mac_type == ATH12K_HAL_SRNG_UMAC) {
@@ -20083,8 +20054,8 @@ qwz_hal_srng_setup(struct qwz_softc *sc, enum hal_ring_type type,
 				   (unsigned long)sc->mem);
 		} else {
 			lmac_idx = ring_id - HAL_SRNG_RING_ID_DMAC_CMN_ID_START;
-			srng->u.src_ring.hp_addr = (void *)(hal->wrp.vaddr +
-			    lmac_idx);
+			srng->u.src_ring.hp_addr = (uint32_t *)((void *)(hal->wrp.vaddr +
+			    lmac_idx));
 			srng->flags |= HAL_SRNG_FLAGS_LMAC_RING;
 		}
 	} else {
@@ -20099,7 +20070,7 @@ qwz_hal_srng_setup(struct qwz_softc *sc, enum hal_ring_type type,
 		srng->u.dst_ring.loop_cnt = 1;
 		srng->u.dst_ring.tp = 0;
 		srng->u.dst_ring.cached_hp = 0;
-		srng->u.dst_ring.hp_addr = (void *)(hal->rdp.vaddr + ring_id);
+		srng->u.dst_ring.hp_addr = (volatile uint32_t *)((void *)(hal->rdp.vaddr + ring_id));
 		if (srng_config->mac_type == ATH12K_HAL_SRNG_UMAC) {
 			if (!sc->hw_params.supports_shadow_regs)
 				srng->u.dst_ring.tp_addr =
@@ -20119,8 +20090,8 @@ qwz_hal_srng_setup(struct qwz_softc *sc, enum hal_ring_type type,
 			 * through FW by writing to a shared memory location
 			 */
 			lmac_idx = ring_id - HAL_SRNG_RING_ID_DMAC_CMN_ID_START;
-			srng->u.dst_ring.tp_addr = (void *)(hal->wrp.vaddr +
-			    lmac_idx);
+			srng->u.dst_ring.tp_addr = (uint32_t *)((void *)(hal->wrp.vaddr +
+			    lmac_idx));
 			srng->flags |= HAL_SRNG_FLAGS_LMAC_RING;
 		}
 	}
@@ -20364,9 +20335,9 @@ qwz_htc_rx_completion_handler(struct qwz_softc *sc, struct mbuf *m)
 		goto out;
 	}
 
-	if (m->m_pkthdr.len < payload_len) {
+	if (M_PKTLEN(m) < payload_len) {
 		printf("%s: HTC Rx: insufficient length, got %d, "
-		    "expected %d\n", __func__, m->m_pkthdr.len, payload_len);
+		    "expected %d\n", __func__, M_PKTLEN(m), payload_len);
 		goto out;
 	}
 
@@ -20398,7 +20369,7 @@ qwz_htc_rx_completion_handler(struct qwz_softc *sc, struct mbuf *m)
 		trailer += payload_len;
 		trailer -= trailer_len;
 		status = qwz_htc_process_trailer(htc, trailer,
-		    trailer_len, eid);
+		    trailer_len, (enum ath12k_htc_ep_id)eid);
 		if (status)
 			goto out;
 
@@ -20435,7 +20406,7 @@ qwz_htc_rx_completion_handler(struct qwz_softc *sc, struct mbuf *m)
 			}
 
 			htc->control_resp_len =
-			    MIN(m->m_pkthdr.len, ATH12K_HTC_MAX_CTRL_MSG_LEN);
+			    MIN(M_PKTLEN(m), ATH12K_HTC_MAX_CTRL_MSG_LEN);
 
 			m_copydata(m, 0, htc->control_resp_len,
 			    htc->control_resp_buffer);
@@ -20765,7 +20736,7 @@ qwz_ce_cleanup_pipes(struct qwz_softc *sc)
 		else if (pipe->src_ring) {
 			for (i = 0; i < pipe->src_ring->nentries; i++) {
 				struct qwz_tx_data *tx_data =
-				    pipe->src_ring->per_transfer_context[i];
+				    (struct qwz_tx_data *)(pipe->src_ring->per_transfer_context[i]);
 
 				if (tx_data == NULL || tx_data->m == NULL)
 					continue;
@@ -20825,7 +20796,7 @@ qwz_ce_srng_msi_ring_params_setup(struct qwz_softc *sc, uint32_t ce_id,
 	int ret;
 
 	ret = sc->ops.get_user_msi_vector(sc, "CE",
-	    &msi_data_count, &msi_data_start, &msi_irq_start);
+	    (int *)(&msi_data_count), &msi_data_start, &msi_irq_start);
 	if (ret)
 		return;
 
@@ -21012,7 +20983,7 @@ qwz_ce_rx_buf_enqueue_pipe(struct qwz_ce_pipe *pipe, bus_dmamap_t map)
 		goto exit;
 	}
 
-	desc = qwz_hal_srng_src_get_next_entry(sc, srng);
+	desc = (uint32_t *)(qwz_hal_srng_src_get_next_entry(sc, srng));
 	if (!desc) {
 		ret = ENOSPC;
 		goto exit;
@@ -21064,7 +21035,7 @@ qwz_ce_rx_post_pipe(struct qwz_ce_pipe *pipe)
 			MCLGET(m, M_DONTWAIT);
 		else
 			MCLGETL(m, M_DONTWAIT, pipe->buf_sz);
-		if ((m->m_flags & M_EXT) == 0) {
+		if ((M_FLAGS(m) & M_EXT) == 0) {
 			ret = ENOBUFS;
 			goto done;
 		}
@@ -21073,7 +21044,7 @@ qwz_ce_rx_post_pipe(struct qwz_ce_pipe *pipe)
 		ctx = pipe->dest_ring->per_transfer_context[idx];
 		rx_data = (struct qwz_rx_data *)ctx;
 
-		m->m_len = m->m_pkthdr.len = pipe->buf_sz;
+		M_SETLEN(m, pipe->buf_sz);
 		ret = bus_dmamap_load_mbuf(sc->sc_dmat, rx_data->map,
 		    m, BUS_DMA_READ | BUS_DMA_NOWAIT);
 		if (ret) {
@@ -21188,27 +21159,27 @@ qwz_ce_recv_process_cb(struct qwz_ce_pipe *pipe)
 	int ret = 0, err;
 
 	while (qwz_ce_completed_recv_next(pipe, &transfer_context,
-	    &nbytes) == 0) {
-		struct qwz_rx_data *rx_data = transfer_context;
+	    (int *)&nbytes) == 0) {
+		struct qwz_rx_data *rx_data = (struct qwz_rx_data *)(transfer_context);
 
 		bus_dmamap_unload(sc->sc_dmat, rx_data->map);
 		m = rx_data->m;
 		rx_data->m = NULL;
 
-		max_nbytes = m->m_pkthdr.len;
+		max_nbytes = M_PKTLEN(m);
 		if (nbytes == 0 || max_nbytes < nbytes) {
 			ifp->if_ierrors++;
 			m_freem(m);
 			continue;
 		}
-		m->m_len = m->m_pkthdr.len = nbytes;
+		M_SETLEN(m, nbytes);
 		ml_enqueue(&ml, m);
 		ret = 1;
 	}
 
 	while ((m = ml_dequeue(&ml))) {
 		DNPRINTF(QWZ_D_CE, "%s: rx ce pipe %d len %d\n", __func__,
-		    pipe->pipe_num, m->m_len);
+		    pipe->pipe_num, M_LEN(m));
 		pipe->recv_cb(sc, m);
 	}
 
@@ -21318,7 +21289,7 @@ qwz_ce_send(struct qwz_softc *sc, struct mbuf *m, uint8_t pipe_id,
 	tx_data = (struct qwz_tx_data *)ctx;
 
 	paddr = tx_data->map->dm_segs[0].ds_addr;
-	qwz_hal_ce_src_set_desc(desc, paddr, m->m_pkthdr.len,
+	qwz_hal_ce_src_set_desc(desc, paddr, M_PKTLEN(m),
 	    transfer_id, byte_swap_data);
 
 	pipe->src_ring->write_index = CE_RING_IDX_INCR(nentries_mask,
@@ -22393,7 +22364,7 @@ qwz_mac_start(struct qwz_softc *sc)
 void
 qwz_init_task(void *arg)
 {
-	struct qwz_softc *sc = arg;
+	struct qwz_softc *sc = (struct qwz_softc *)(arg);
 	struct ifnet *ifp = &sc->sc_ic.ic_if;
 	int s = splnet();
 
@@ -22832,7 +22803,7 @@ void
 qwz_dp_rx_tid_retire_done(struct qwz_dp *dp, void *ctx,
     enum hal_reo_cmd_status status)
 {
-	struct dp_rx_tid *rx_tid = ctx;
+	struct dp_rx_tid *rx_tid = (struct dp_rx_tid *)(ctx);
 	struct qwz_rx_tid_retire *retire = &dp->rx_tid_retire[rx_tid->tid];
 
 	KASSERT(retire->data.mem == rx_tid->mem);
@@ -23171,7 +23142,7 @@ qwz_peer_rx_tid_setup(struct qwz_softc *sc, struct ieee80211_node *ni,
 
 	paddr = QWZ_DMA_DVA(rx_tid->mem);
 
-	rx_tid->vaddr = vaddr;
+	rx_tid->vaddr = (uint32_t *)(vaddr);
 	rx_tid->paddr = paddr;
 	rx_tid->size = hw_desc_sz;
 	rx_tid->active = 1;
@@ -23396,7 +23367,7 @@ qwz_dp_tx_encap_nwifi(struct mbuf **mp)
 	uint8_t *qos_ctl;
 	int hdrlen;
 
-	if (m->m_len < sizeof(*wh) &&
+	if (M_LEN(m) < sizeof(*wh) &&
 	    (m = m_pullup(m, sizeof(*wh))) == NULL) {
 		*mp = NULL;
 		return ENOBUFS;
@@ -23409,7 +23380,7 @@ qwz_dp_tx_encap_nwifi(struct mbuf **mp)
 	}
 
 	hdrlen = ieee80211_get_hdrlen(wh);
-	if (m->m_len < hdrlen &&
+	if (M_LEN(m) < hdrlen &&
 	    (m = m_pullup(m, hdrlen)) == NULL) {
 		*mp = NULL;
 		return ENOBUFS;
@@ -23573,7 +23544,7 @@ qwz_dp_tx(struct qwz_softc *sc, struct qwz_vif *arvif, uint8_t pdev_id,
 			case IEEE80211_CIPHER_CCMP:
 				ti.encrypt_type = HAL_ENCRYPT_TYPE_CCMP_128;
 				if (ti.encap_type == HAL_TCL_ENCAP_TYPE_RAW &&
-				    m_makespace(m, m->m_pkthdr.len,
+				    m_makespace(m, M_PKTLEN(m),
 					IEEE80211_CCMP_MICLEN, &off) == NULL) {
 					m_freem(m);
 					return ENOSPC;
@@ -23582,7 +23553,7 @@ qwz_dp_tx(struct qwz_softc *sc, struct qwz_vif *arvif, uint8_t pdev_id,
 			case IEEE80211_CIPHER_TKIP:
 				ti.encrypt_type = HAL_ENCRYPT_TYPE_TKIP_MIC;
 				if (ti.encap_type == HAL_TCL_ENCAP_TYPE_RAW &&
-				    m_makespace(m, m->m_pkthdr.len,
+				    m_makespace(m, M_PKTLEN(m),
 					IEEE80211_TKIP_MICLEN, &off) == NULL) {
 					m_freem(m);
 					return ENOSPC;
@@ -23664,7 +23635,7 @@ qwz_dp_tx(struct qwz_softc *sc, struct qwz_vif *arvif, uint8_t pdev_id,
 	bus_dmamap_sync(sc->sc_dmat, tx_data->map, 0,
 	    tx_data->map->dm_mapsize, BUS_DMASYNC_PREWRITE);
 
-	ti.data_len = m->m_pkthdr.len;
+	ti.data_len = M_PKTLEN(m);
 
 	hal_ring_id = tx_ring->tcl_data_ring.ring_id;
 	tcl_ring = &sc->hal.srng_list[hal_ring_id];
@@ -24025,7 +23996,7 @@ out:
 void
 qwz_scan_timeout(void *arg)
 {
-	struct qwz_softc *sc = arg;
+	struct qwz_softc *sc = (struct qwz_softc *)(arg);
 	int s = splnet();
 
 #ifdef notyet
@@ -24769,7 +24740,7 @@ qwz_rx_agg_stop(struct qwz_softc *sc, struct ieee80211_node *ni, uint8_t tid)
 void
 qwz_ba_task(void *arg)
 {
-	struct qwz_softc *sc = arg;
+	struct qwz_softc *sc = (struct qwz_softc *)(arg);
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_node *ni = ic->ic_bss;
 	int s = splnet();
@@ -24797,7 +24768,7 @@ int
 qwz_ampdu_rx_start(struct ieee80211com *ic, struct ieee80211_node *ni,
     uint8_t tid)
 {
-	struct qwz_softc *sc = ic->ic_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ic->ic_softc);
 
 	sc->ba_rx.start_tidmask |= (1 << tid);
 	qwz_add_task(sc, systq, &sc->ba_task);
@@ -24808,7 +24779,7 @@ void
 qwz_ampdu_rx_stop(struct ieee80211com *ic, struct ieee80211_node *ni,
     uint8_t tid)
 {
-	struct qwz_softc *sc = ic->ic_softc;
+	struct qwz_softc *sc = (struct qwz_softc *)(ic->ic_softc);
 
 	sc->ba_rx.stop_tidmask |= (1 << tid);
 	qwz_add_task(sc, systq, &sc->ba_task);
@@ -25013,7 +24984,7 @@ qwz_run_stop(struct qwz_softc *sc)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct qwz_vif *arvif = &sc->sc_vif;
 	uint8_t pdev_id = 0; /* TODO: derive pdev ID somehow? */
-	struct qwz_node *nq = (void *)ic->ic_bss;
+	struct qwz_node *nq = (struct qwz_node *)((void *)ic->ic_bss);
 	struct ath12k_peer *peer = TAILQ_FIRST(&sc->peers);
 	int ret;
 
