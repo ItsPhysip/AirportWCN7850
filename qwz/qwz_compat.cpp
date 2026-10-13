@@ -8,6 +8,7 @@
 #include "qwz_fw.h"
 
 #include <IOKit/IOLocks.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <kern/clock.h>
 #include <kern/thread.h>
 
@@ -993,4 +994,44 @@ qwz_compat_publish_blob(const char *key, const void *buf, size_t len)
 	d->release();
 	QWZLOG("published %zu bytes as IORegistry property %s", len, key);
 	return 0;
+}
+
+/* ---- bring-up checkpoints ------------------------------------------------ */
+
+static int
+qwz_stage_limit(void)
+{
+	static int limit = -1;
+	IORegistryEntry *opts;
+	int v;
+
+	if (limit >= 0)
+		return limit;
+	limit = 1000;	/* no limit */
+	if (PE_parse_boot_argn("qwz_stage", &v, sizeof(v))) {
+		limit = v;
+	} else if ((opts = IORegistryEntry::fromPath("/options", gIODTPlane)) != NULL) {
+		OSObject *o = opts->copyProperty("qwz-stage");
+		OSData *d = OSDynamicCast(OSData, o);
+		if (d != NULL && d->getLength() > 0 && d->getLength() < 8) {
+			char buf[8] = { 0 };
+			memcpy(buf, d->getBytesNoCopy(), d->getLength());
+			limit = (int)strtoul(buf, NULL, 10);
+		}
+		OSSafeReleaseNULL(o);
+		opts->release();
+	}
+	QWZLOG("bring-up stage limit: %d", limit);
+	return limit;
+}
+
+int
+qwz_stage_ok(int n, const char *what)
+{
+	if (n > qwz_stage_limit()) {
+		QWZLOG("stage %d (%s) not run: stage limit reached", n, what);
+		return 0;
+	}
+	QWZLOG("stage %d: %s", n, what);
+	return 1;
 }

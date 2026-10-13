@@ -670,6 +670,9 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	psc->sc_pc = pa->pa_pc;
 	psc->sc_tag = pa->pa_tag;
 
+	if (!qwz_stage_ok(1, "PCI config space and BAR mapping"))
+		return;
+
 #ifdef __HAVE_FDT
 	sc->sc_node = PCITAG_NODE(pa->pa_tag);
 #endif
@@ -741,6 +744,8 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 		psc->mhi_irq[MHI_ER_DATA] = 2;
 	}
 
+	if (!qwz_stage_ok(2, "MSI interrupt"))
+		return;
 	intrstr = pci_intr_string(psc->sc_pc, ih);
 	snprintf(psc->sc_ivname[0], sizeof(psc->sc_ivname[0]), "%s:bhi",
 	    sc->sc_dev.dv_xname);
@@ -795,6 +800,8 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 		}
 	}
 
+	if (!qwz_stage_ok(3, "power state D0 and first register reads"))
+		return;
 	pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D0);
 
 	switch (PCI_PRODUCT(pa->pa_id)) {
@@ -841,6 +848,8 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	if (error)
 		goto err_pci_disable_msi;
 
+	if (!qwz_stage_ok(4, "DMA memory below 4 GB for MHI and rings"))
+		goto err_vif_free;
 	psc->chan_ctxt = qwz_dmamem_alloc(sc->sc_dmat,
 	    sizeof(struct qwz_mhi_chan_ctxt) * psc->max_chan, 0);
 	if (psc->chan_ctxt == NULL) {
@@ -998,6 +1007,10 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	 * We cannot read the MAC address without loading the
 	 * firmware from disk. Postpone until mountroot is done.
 	 */
+	if (!qwz_stage_ok(5, "attach done; next is the firmware boot")) {
+		ifp->if_softc = NULL;	/* report the attach as failed */
+		return;
+	}
 	config_mountroot(self, qwz_pci_attach_hook);
 	return;
 
@@ -1025,6 +1038,7 @@ err_vif_free:
 err_pci_disable_msi:
 err_pci_free_region:
 	pci_intr_disestablish(psc->sc_pc, psc->sc_ih[0]);
+	psc->sc_ih[0] = NULL;	/* macOS: detach must not release it again */
 	return;
 }
 
@@ -2062,6 +2076,8 @@ qwz_pci_power_up(struct qwz_softc *sc)
 	psc->register_window = 0;
 	clear_bit(ATH12K_FLAG_DEVICE_INIT_DONE, sc->sc_flags);
 
+	if (!qwz_stage_ok(6, "chip reset (LTSSM, SoC global reset)"))
+		return EIO;
 	qwz_pci_sw_reset(sc, true);
 
 	/* Disable ASPM during firmware download due to problems switching
@@ -2071,6 +2087,8 @@ qwz_pci_power_up(struct qwz_softc *sc)
 
 	qwz_pci_msi_enable(sc);
 
+	if (!qwz_stage_ok(7, "MHI start (BHI registers, execution environment)"))
+		return EIO;
 	error = qwz_mhi_start(psc);
 	if (error)
 		return error;
@@ -2910,12 +2928,16 @@ qwz_mhi_start(struct qwz_pci_softc *psc)
 
 	/* Transition to primary runtime. */
 	if (MHI_IN_PBL(ee)) {
+		if (!qwz_stage_ok(8, "firmware download (BHI/BHIE DMA)"))
+			return EIO;
 		ret = qwz_mhi_fw_load_handler(psc);
 		if (ret)
 			return ret;
 
 		/* XXX without this delay starting the channels may fail */
 		delay(1000);
+		if (!qwz_stage_ok(9, "MHI channels"))
+			return EIO;
 		qwz_mhi_start_channels(psc);
 	} else {
 		/* XXX Handle partially initialized device...?!? */

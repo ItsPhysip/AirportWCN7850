@@ -441,6 +441,14 @@ void	qwz_timeout_set_proc(CTimeout **, void (*)(void *), void *);
 /* loadfirmware(9): served from the images compiled into the kext. */
 int	loadfirmware(const char *, u_char **, size_t *);
 
+/*
+ * Bring-up checkpoints. qwz_stage_ok(n, what) logs "stage n: what" and
+ * returns 0 when n is past the limit set by the qwz_stage=<n> boot-arg or the
+ * qwz-stage NVRAM variable (`sudo nvram qwz-stage=<n>`), so a bring-up that
+ * freezes the machine can be stopped just before the step that does it.
+ */
+int	qwz_stage_ok(int, const char *);
+
 /* Debug: attach a copy of `buf` to the controller as an IORegistry property. */
 int	qwz_compat_publish_blob(const char *, const void *, size_t);
 void	qwz_compat_set_controller(IOService *);
