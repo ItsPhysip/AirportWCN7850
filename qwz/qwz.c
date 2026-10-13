@@ -6584,14 +6584,14 @@ qwz_core_parse_bd_ie_board(struct qwz_softc *sc,
 
 			name_match_found = 1;
 			   DPRINTF("%s: found match %s for name '%s'", __func__,
-			       qwz_bd_ie_type_str(ie_id), boardname);
+			       qwz_bd_ie_type_str((enum ath12k_bd_ie_type)ie_id), boardname);
 		} else if (board_ie_id == data_id) {
 			if (!name_match_found)
 				/* no match found */
 				goto next;
 
 			DPRINTF("%s: found %s for '%s'", __func__,
-			    qwz_bd_ie_type_str(ie_id), boardname);
+			    qwz_bd_ie_type_str((enum ath12k_bd_ie_type)ie_id), boardname);
 
 			*boardfw = (const u_char *)(board_ie_data);
 			*boardfw_len = board_ie_len;
@@ -11562,7 +11562,8 @@ qwz_scan_event(struct qwz_softc *sc, struct mbuf *m)
 	DNPRINTF(QWZ_D_WMI,
 	    "%s: event scan %s type %d reason %d freq %d req_id %d scan_id %d "
 	    "vdev_id %d state %s (%d)\n", __func__,
-	    qwz_wmi_event_scan_type_str(scan_ev.event_type, scan_ev.reason),
+	    qwz_wmi_event_scan_type_str((enum wmi_scan_event_type)scan_ev.event_type,
+	    (enum wmi_scan_completion_reason)scan_ev.reason),
 	    scan_ev.event_type, scan_ev.reason, scan_ev.channel_freq,
 	    scan_ev.scan_req_id, scan_ev.scan_id, scan_ev.vdev_id,
 	    qwz_scan_state_str(sc->scan.state), sc->scan.state);
@@ -12683,7 +12684,7 @@ qwz_htc_connect_service(struct qwz_htc *htc,
 		DNPRINTF(QWZ_D_HTC,
 		    "%s: htc service %s does not allocate target credits\n",
 		    sc->sc_dev.dv_xname,
-		    qwz_htc_service_name(conn_req->service_id));
+		    qwz_htc_service_name((enum ath12k_htc_svc_id)conn_req->service_id));
 
 	m = qwz_htc_build_tx_ctrl_mbuf();
 	if (!m) {

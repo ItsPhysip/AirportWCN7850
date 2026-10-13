@@ -71,7 +71,7 @@
 #include "qwzreg.h"
 #include "qwzvar.h"
 
-#ifdef QWZ_DEBUG 
+#if defined(QWZ_DEBUG) && !defined(__APPLE__)
 /* Headers needed for RDDM dump */
 #include <sys/namei.h>
 #include <sys/pledge.h>
@@ -3534,18 +3534,20 @@ qwz_rddm_prepare(struct qwz_pci_softc *psc)
 void
 qwz_rddm_task(void *arg)
 {
-	struct qwz_pci_softc *psc = arg;
+	struct qwz_pci_softc *psc = (struct qwz_pci_softc *)(arg);
 	struct qwz_softc *sc = &psc->sc_sc;
 	uint32_t reg, state = MHI_BHIE_RXVECSTATUS_STATUS_RESET;
 	const size_t len = sc->hw_params.rddm_size;
 	int i, timeout;
 	const uint32_t msecs = 2000, retries = 1000;
 	uint8_t *rddm;
+#ifndef __APPLE__
 	struct nameidata nd;
 	struct vnode *vp = NULL;
 	struct iovec iov[3];
 	struct uio uio;
 	char path[PATH_MAX];
+#endif
 	int error = 0;
 
 	if (psc->rddm_data == NULL) {
@@ -3570,7 +3572,7 @@ qwz_rddm_task(void *arg)
 		return;
 	}
 
-	rddm = QWZ_DMA_KVA(psc->rddm_data);
+	rddm = (uint8_t *)(QWZ_DMA_KVA(psc->rddm_data));
 	DPRINTF("%s: RDDM snippet:\n", __func__);
 	for (i = 0; i < MIN(64, len); i++) {
 		DPRINTF("%s %.2x", i % 16 == 0 ? "\n" : "", rddm[i]);
@@ -3580,6 +3582,11 @@ qwz_rddm_task(void *arg)
 	DPRINTF("%s: sleeping for 30 seconds to allow userland to boot\n", __func__);
 	tsleep_nsec(&psc->rddm_data, 0, "qwzrddm", SEC_TO_NSEC(30));
 
+#ifdef __APPLE__
+	/* macOS: publish the dump in the IORegistry instead of writing a file. */
+	error = qwz_compat_publish_blob("QwzRDDM", rddm, len);
+	goto done;
+#else
 	snprintf(path, sizeof(path), "/root/%s-rddm.bin", sc->sc_dev.dv_xname);
 	DPRINTF("%s: saving RDDM to %s\n", __func__, path);
 	NDINIT(&nd, 0, 0, UIO_SYSSPACE, path, curproc);
@@ -3618,6 +3625,7 @@ qwz_rddm_task(void *arg)
 	if (error)
 		DPRINTF("%s: vn_close: error %d\n", __func__, error);
 	#endif
+#endif
 done:
 	qwz_dmamem_free(sc->sc_dmat, psc->rddm_data);
 	qwz_dmamem_free(sc->sc_dmat, psc->rddm_vec);

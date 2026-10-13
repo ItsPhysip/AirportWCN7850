@@ -1,5 +1,6 @@
 firmware/dl/
 firmware/FwBinary.cpp
 build/
+build-debug/
 deps/
 .DS_Store

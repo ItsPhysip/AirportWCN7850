@@ -73,6 +73,11 @@ IOService* itlwm::probe(IOService *provider, SInt32 *score)
     if (!device) {
         return NULL;
     }
+    int qwzoff = 0;
+    if (PE_parse_boot_argn("-qwzoff", &qwzoff, sizeof(qwzoff))) {
+        IOLog("qwz: disabled by the -qwzoff boot-arg\n");
+        return NULL;
+    }
     if (ItlQwz::qwz_match(device)) {
         isMatch = true;
         fHalService = new ItlQwz;

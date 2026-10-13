@@ -710,9 +710,15 @@ qwz_bus_dmamap_load_mbuf(bus_dma_tag_t t, bus_dmamap_t map, mbuf_t m, int flags)
 {
 	int err = qwz_map_bounce(map, mbuf_pkthdr_len(m));
 
-	if (err == 0)
-		map->_mbuf = m;
-	return err;
+	if (err)
+		return err;
+	map->_mbuf = m;
+	map->_flags = flags;
+	map->_postread = 0;
+	/* Transmit paths may not PREWRITE-sync (see the header): copy in now. */
+	if (flags & BUS_DMA_WRITE)
+		mbuf_copydata(m, 0, map->dm_mapsize, map->_bounce->kva);
+	return 0;
 }
 
 int
@@ -731,6 +737,10 @@ qwz_bus_dmamap_load_raw(bus_dma_tag_t t, bus_dmamap_t map, bus_dma_segment_t *se
 void
 qwz_bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t map)
 {
+	/* Receive paths may unload without POSTREAD-syncing: copy out now. */
+	if (map->_mbuf != NULL && (map->_flags & BUS_DMA_READ) && !map->_postread)
+		qwz_bus_dmamap_sync(t, map, 0, map->dm_mapsize, BUS_DMASYNC_POSTREAD);
+	map->_flags = 0;
 	map->dm_nsegs = 0;
 	map->dm_mapsize = 0;
 	map->_mbuf = NULL;
@@ -763,6 +773,7 @@ qwz_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t off, bus_size_
 			memcpy(bounce, (uint8_t *)map->_kva + off, len);
 	}
 	if (ops & BUS_DMASYNC_POSTREAD) {
+		map->_postread = 1;
 		if (map->_mbuf) {
 			if (mbuf_next(map->_mbuf) == NULL && off + len <= mbuf_len(map->_mbuf))
 				memcpy((uint8_t *)mbuf_data(map->_mbuf) + off, bounce, len);
@@ -956,4 +967,30 @@ qwz_compat_run_mountroot(void)
 	qwz_mountroot_fn = NULL;
 	if (fn != NULL)
 		fn(qwz_mountroot_dev);
+}
+
+/* ---- debug -------------------------------------------------------------- */
+
+static IOService *qwz_controller;
+
+void
+qwz_compat_set_controller(IOService *controller)
+{
+	qwz_controller = controller;
+}
+
+int
+qwz_compat_publish_blob(const char *key, const void *buf, size_t len)
+{
+	OSData *d;
+
+	if (qwz_controller == NULL)
+		return ENXIO;
+	d = OSData::withBytes(buf, (unsigned int)len);
+	if (d == NULL)
+		return ENOMEM;
+	qwz_controller->setProperty(key, d);
+	d->release();
+	QWZLOG("published %zu bytes as IORegistry property %s", len, key);
+	return 0;
 }

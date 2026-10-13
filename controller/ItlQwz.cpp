@@ -99,9 +99,15 @@ ItlQwz::attach(IOPCIDevice *device)
 	    device->configRead16(kIOPCIConfigSubSystemVendorID),
 	    device->configRead16(kIOPCIConfigSubSystemID));
 
+#ifdef QWZ_DEBUG
+	/* qwz_debug=<mask of QWZ_D_* from qwzvar.h> sets the trace level. */
+	PE_parse_boot_argn("qwz_debug", &qwz_debug, sizeof(qwz_debug));
+	QWZLOG("debug build, qwz_debug=0x%x", qwz_debug);
+#endif
 	qwz_compat_init();
 	qwz_hal_gate = getMainCommandGate();
 	qwz_compat_set_gate(qwz_hal_gate);
+	qwz_compat_set_controller(getController());
 	taskq_init();
 
 	bzero(&pa, sizeof(pa));

@@ -15,6 +15,9 @@
  *    dma_constraint). mbufs can live anywhere on macOS, so loading an mbuf
  *    into a map goes through a per-map bounce buffer below 4 GB, copied in
  *    bus_dmamap_sync(PREWRITE) and out in bus_dmamap_sync(POSTREAD).
+ *    Some qwz paths skip those syncs (harmless on coherent amd64), so a
+ *    BUS_DMA_WRITE load also copies in at load time and a BUS_DMA_READ map
+ *    that was never POSTREAD-synced copies out when it is unloaded.
  *
  * Copyright (c) 2026 razvanccr. GPL-2.0-or-later (see LICENSE).
  */
@@ -242,6 +245,8 @@ struct qwz_bus_dmamap {
 	struct qwz_bounce *_bounce;		/* below 4 GB, at least _size bytes */
 	mbuf_t		 _mbuf;			/* loaded mbuf, if bounced */
 	void		*_kva;			/* loaded kva, if bounced */
+	int		 _flags;		/* BUS_DMA_READ / BUS_DMA_WRITE from the load */
+	int		 _postread;		/* a POSTREAD sync ran since the load */
 };
 typedef struct qwz_bus_dmamap *bus_dmamap_t;
 
@@ -435,5 +440,9 @@ void	qwz_timeout_set_proc(CTimeout **, void (*)(void *), void *);
 
 /* loadfirmware(9): served from the images compiled into the kext. */
 int	loadfirmware(const char *, u_char **, size_t *);
+
+/* Debug: attach a copy of `buf` to the controller as an IORegistry property. */
+int	qwz_compat_publish_blob(const char *, const void *, size_t);
+void	qwz_compat_set_controller(IOService *);
 
 #endif /* QWZ_COMPAT_H */
