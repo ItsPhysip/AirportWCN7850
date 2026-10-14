@@ -22,7 +22,8 @@ COMMON=(-arch x86_64 -mmacosx-version-min=13.0 -fapple-kext -mkernel -nostdinc
   -DQWZMAC_VERSION=\"$VERSION\"
   -x c++ -std=gnu++14 -fno-rtti -fno-exceptions -fno-builtin -fno-common -fno-cxx-exceptions
   -O2 -g -Wno-deprecated-register -Wno-everything)
-[ "${DEBUG:-0}" = 1 ] && COMMON+=(-DDEBUG=1 -DQWZ_DEBUG)
+# Debug builds use -O0 like an Xcode Debug kext build.
+[ "${DEBUG:-0}" = 1 ] && COMMON+=(-DDEBUG=1 -DQWZ_DEBUG -O0)
 
 SRCS=$(find itl80211 include/HAL controller qwz firmware -name '*.c' -o -name '*.cpp' | sort)
 
