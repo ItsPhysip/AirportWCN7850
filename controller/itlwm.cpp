@@ -20,6 +20,7 @@
 #include <IOKit/network/IONetworkMedium.h>
 #include <net/ethernet.h>
 #include <sys/sysctl.h>
+int qwz_stage_ok(int, const char *);	/* qwz/qwz_compat.cpp */
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_node.h>
 #include <net80211/ieee80211_ioctl.h>
@@ -456,6 +457,8 @@ void qwz_sysctl_unregister(void)
 
 bool itlwm::finishStart()
 {
+    if (!qwz_stage_ok(0, "bring-up thread running"))
+        return false;
     if (!fHalService->attach(pciNub)) {
         XYLog("attach fail\n");
         return false;

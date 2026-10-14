@@ -74,6 +74,9 @@ ItlQwz::attachGated(OSObject *owner, void *arg0, void *, void *, void *)
 	struct pci_attach_args *pa = (struct pci_attach_args *)arg0;
 	int err;
 
+	if (!qwz_stage_ok(2, "enter the qwz attach holding the gate"))
+		return kIOReturnError;
+
 	that->sc = qwz_pci_macos_alloc();
 	if (that->sc == NULL)
 		return kIOReturnNoMemory;
@@ -108,6 +111,8 @@ ItlQwz::attach(IOPCIDevice *device)
 	qwz_hal_gate = getMainCommandGate();
 	qwz_compat_set_gate(qwz_hal_gate);
 	qwz_compat_set_controller(getController());
+	if (!qwz_stage_ok(1, "driver setup: task queue thread"))
+		return false;
 	static bool taskq_ready;
 	if (!taskq_ready) {	/* a retried bring-up must not start systq twice */
 		taskq_init();
