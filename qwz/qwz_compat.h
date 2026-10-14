@@ -438,6 +438,7 @@ task_set(struct task *t, void (*fn)(void *), void *arg)
  * its callback is handed to systq instead. */
 void	qwz_timeout_set_proc(CTimeout **, void (*)(void *), void *);
 #define timeout_set_proc(to, fn, arg)	qwz_timeout_set_proc((to), (fn), (arg))
+void	qwz_timeout_free_proc(CTimeout **);	/* undo timeout_set_proc at detach */
 #define QWZ_HZ				100	/* OpenBSD's tick rate */
 #define timeout_add(to, ticks)		timeout_add_msec((to), (ticks) * (1000 / QWZ_HZ))
 

@@ -1029,6 +1029,8 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	 * firmware from disk. Postpone until mountroot is done.
 	 */
 	if (!qwz_stage_ok(9, "attach done; next is the firmware boot")) {
+		ieee80211_ifdetach(ifp);
+		if_detach(ifp);
 		ifp->if_softc = NULL;	/* report the attach as failed */
 		return;
 	}
@@ -1080,6 +1082,15 @@ qwz_pci_detach(struct device *self, int flags)
 
 	qwz_detach(sc);
 	qwz_vif_free(sc);
+#ifdef __APPLE__
+	/* The softc is about to be freed; nothing may fire into it afterwards. */
+	timeout_del(&sc->scan.timeout);
+	qwz_timeout_free_proc(&sc->scan.timeout);
+	timeout_del(&sc->mon_reap_timer);
+	timeout_free(&sc->mon_reap_timer);
+	ieee80211_ifdetach(ifp);
+	if_detach(ifp);
+#endif
 
 	qwz_pci_free_event_rings(psc);
 	qwz_pci_free_xfer_rings(psc);

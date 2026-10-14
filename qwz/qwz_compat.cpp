@@ -256,6 +256,19 @@ qwz_timeout_set_proc(CTimeout **to, void (*fn)(void *), void *arg)
 	timeout_set(to, qwz_proc_timeout_fire, pt);
 }
 
+void
+qwz_timeout_free_proc(CTimeout **to)
+{
+	struct qwz_proc_timeout *pt;
+
+	if (to == NULL || *to == NULL)
+		return;
+	pt = (struct qwz_proc_timeout *)(*to)->to_arg;
+	task_del(systq, &pt->task);
+	timeout_free(to);
+	qwz_free(pt, M_DEVBUF, sizeof(*pt));
+}
+
 /* ---- PCI ---------------------------------------------------------------- */
 
 pcireg_t
@@ -710,8 +723,14 @@ qwz_bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *buf, bus_size_t len
 int
 qwz_bus_dmamap_load_mbuf(bus_dma_tag_t t, bus_dmamap_t map, mbuf_t m, int flags)
 {
-	int err = qwz_map_bounce(map, mbuf_pkthdr_len(m));
+	size_t len = 0;
+	mbuf_t n;
+	int err;
 
+	/* OpenBSD sums m_len over the chain; the pkthdr length may be stale. */
+	for (n = m; n != NULL; n = mbuf_next(n))
+		len += mbuf_len(n);
+	err = qwz_map_bounce(map, len);
 	if (err)
 		return err;
 	map->_mbuf = m;
@@ -1020,10 +1039,13 @@ qwz_stage_limit(void)
 	} else if ((opts = IORegistryEntry::fromPath("/options", gIODTPlane)) != NULL) {
 		OSObject *o = opts->copyProperty("qwz-stage");
 		OSData *d = OSDynamicCast(OSData, o);
+		OSString *str = OSDynamicCast(OSString, o);
 		if (d != NULL && d->getLength() > 0 && d->getLength() < 8) {
 			char buf[8] = { 0 };
 			memcpy(buf, d->getBytesNoCopy(), d->getLength());
 			limit = (int)strtoul(buf, NULL, 10);
+		} else if (str != NULL) {
+			limit = (int)strtoul(str->getCStringNoCopy(), NULL, 10);
 		}
 		OSSafeReleaseNULL(o);
 		opts->release();

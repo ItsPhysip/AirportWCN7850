@@ -506,10 +506,10 @@ void itlwm::releaseAll()
     }
     if (_fWorkloop) {
         if (_fCommandGate) {
-//            _fCommandGate->disable();
-            _fWorkloop->removeEventSource(_fCommandGate);
-            _fCommandGate->release();
-            _fCommandGate = NULL;
+            IOCommandGate *gate = _fCommandGate;
+            _fCommandGate = NULL;   /* taskq threads test this before runAction */
+            _fWorkloop->removeEventSource(gate);
+            gate->release();
         }
         if (fWatchdogWorkLoop && watchdogTimer) {
             watchdogTimer->cancelTimeout();

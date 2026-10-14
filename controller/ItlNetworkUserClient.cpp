@@ -46,13 +46,15 @@ bool ItlNetworkUserClient::start(IOService *provider)
     if( !super::start( provider ))
         return false;
     fDriver = OSDynamicCast(itlwm, provider);
+    /* QwzMac: no client for an idle driver (qwz_stage limit or failed bring-up). */
+    if (fDriver == NULL || fDriver->fHalService == NULL ||
+        fDriver->fHalService->get80211Controller() == NULL) {
+        return false;
+    }
     fInf = fDriver->getNetworkInterface();
     fIfp = fDriver->getIfp();
     fDriverInfo = fDriver->fHalService->getDriverInfo();
     fDriverController = fDriver->fHalService->getDriverController();
-    if (fDriver == NULL) {
-        return false;
-    }
     return true;
 }
 
@@ -81,7 +83,7 @@ IOReturn ItlNetworkUserClient::externalMethod(uint32_t selector, IOExternalMetho
     bool isSet = selector & IOCTL_MASK;
     selector &= ~IOCTL_MASK;
 //    IOLog("externalMethod invoke. selector=0x%X isSet=%d\n", selector, isSet);
-    if (selector < 0 || selector > IOCTL_ID_MAX) {
+    if (selector >= IOCTL_ID_MAX) {	/* QwzMac: sMethods has IOCTL_ID_MAX entries */
         return super::externalMethod(selector, arguments, NULL, this, NULL);
     }
     void *data = isSet ? (void *)arguments->structureInput : (void *)arguments->structureOutput;
