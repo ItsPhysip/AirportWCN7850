@@ -19,6 +19,7 @@
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/network/IONetworkMedium.h>
 #include <net/ethernet.h>
+#include <sys/sysctl.h>
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_node.h>
 #include <net80211/ieee80211_ioctl.h>
@@ -34,6 +35,7 @@ bool itlwm::init(OSDictionary *properties)
 {
     fStartCall = NULL;
     fStopping = false;
+    fBringUp = kBringUpIdle;
     fNetIf = NULL;
     return super::init(properties);
 }
@@ -356,10 +358,36 @@ bool itlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
+    qwz_sysctl_register(this);
+#ifdef QWZ_DEBUG
+    /*
+     * Debug builds wait to be told: `sudo sysctl debug.qwz.start=1`, with
+     * `log stream` already running, so every bring-up stage is on screen
+     * even if the machine freezes. qwz_auto=1 restores the timed start.
+     */
+    int automatic = 0;
+    if (!PE_parse_boot_argn("qwz_auto", &automatic, sizeof(automatic)) || !automatic) {
+        IOLog("qwz: loaded; start the bring-up with: sudo sysctl debug.qwz.start=1\n");
+        return true;
+    }
+#endif
     IOLog("qwz: bring-up scheduled in %u s\n", delay);
+    fBringUp = kBringUpRunning;
     retain();
     clock_interval_to_deadline(delay, kSecondScale, &deadline);
     thread_call_enter_delayed(fStartCall, deadline);
+    return true;
+}
+
+bool itlwm::requestBringUp()
+{
+    if (fStopping || fStartCall == NULL ||
+        !OSCompareAndSwap(kBringUpIdle, kBringUpRunning, &fBringUp))
+        return false;
+    IOLog("qwz: bring-up requested\n");
+    retain();
+    if (thread_call_enter(fStartCall))
+        release();
     return true;
 }
 
@@ -367,9 +395,63 @@ void itlwm::startThreadCall(thread_call_param_t owner, thread_call_param_t)
 {
     itlwm *that = (itlwm *)owner;
 
-    if (!that->fStopping && !that->finishStart())
-        IOLog("qwz: bring-up failed; the driver stays idle\n");
+    if (!that->fStopping && that->finishStart()) {
+        that->fBringUp = kBringUpDone;
+        IOLog("qwz: bring-up finished\n");
+    } else {
+        /* Failed or stopped at the stage limit: debug.qwz.start=1 retries. */
+        that->fBringUp = kBringUpIdle;
+        IOLog("qwz: bring-up did not complete; the driver stays idle\n");
+    }
     that->release();
+}
+
+/* ---- debug.qwz sysctls ------------------------------------------------- */
+
+extern int qwz_stage_sysctl;	/* qwz/qwz_compat.cpp */
+static itlwm *qwz_sysctl_owner;
+
+static int
+qwz_sysctl_start(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+    int v = 0;
+    int err = sysctl_handle_int(oidp, &v, 0, req);
+
+    if (err || req->newptr == USER_ADDR_NULL)
+        return err;
+    if (v != 1 || qwz_sysctl_owner == NULL)
+        return EINVAL;
+    return qwz_sysctl_owner->requestBringUp() ? 0 : EBUSY;
+}
+
+SYSCTL_NODE(_debug, OID_AUTO, qwz, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "QwzMac");
+SYSCTL_PROC(_debug_qwz, OID_AUTO, start, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, 0, qwz_sysctl_start, "I", "write 1 to run the bring-up");
+SYSCTL_INT(_debug_qwz, OID_AUTO, stage, CTLFLAG_RW | CTLFLAG_LOCKED,
+    &qwz_stage_sysctl, 0, "stop the bring-up before this stage (-1: no limit)");
+
+static bool qwz_sysctl_registered;
+
+void qwz_sysctl_register(itlwm *owner)
+{
+    qwz_sysctl_owner = owner;
+    if (qwz_sysctl_registered)
+        return;
+    sysctl_register_oid(&sysctl__debug_qwz);
+    sysctl_register_oid(&sysctl__debug_qwz_start);
+    sysctl_register_oid(&sysctl__debug_qwz_stage);
+    qwz_sysctl_registered = true;
+}
+
+void qwz_sysctl_unregister(void)
+{
+    qwz_sysctl_owner = NULL;
+    if (!qwz_sysctl_registered)
+        return;
+    sysctl_unregister_oid(&sysctl__debug_qwz_stage);
+    sysctl_unregister_oid(&sysctl__debug_qwz_start);
+    sysctl_unregister_oid(&sysctl__debug_qwz);
+    qwz_sysctl_registered = false;
 }
 
 bool itlwm::finishStart()
@@ -492,6 +574,7 @@ void itlwm::stop(IOService *provider)
 {
     XYLog("%s\n", __FUNCTION__);
     fStopping = true;
+    qwz_sysctl_unregister();
     if (fStartCall != NULL) {
         /* A bring-up that has not run yet must not run after stop. */
         if (thread_call_cancel_wait(fStartCall))

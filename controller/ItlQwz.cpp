@@ -108,7 +108,11 @@ ItlQwz::attach(IOPCIDevice *device)
 	qwz_hal_gate = getMainCommandGate();
 	qwz_compat_set_gate(qwz_hal_gate);
 	qwz_compat_set_controller(getController());
-	taskq_init();
+	static bool taskq_ready;
+	if (!taskq_ready) {	/* a retried bring-up must not start systq twice */
+		taskq_init();
+		taskq_ready = true;
+	}
 
 	bzero(&pa, sizeof(pa));
 	pa.pa_tag = device;

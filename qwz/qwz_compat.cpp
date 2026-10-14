@@ -301,6 +301,7 @@ pci_mapreg_map(struct pci_attach_args *pa, int reg, pcireg_t type, int flags,
 
 	if (map == NULL)
 		return ENOMEM;
+	OSSafeReleaseNULL(qwz_bar_map);	/* a retried bring-up maps again */
 	qwz_bar_map = map;
 	if (tagp)
 		*tagp = 0;
@@ -998,10 +999,16 @@ qwz_compat_publish_blob(const char *key, const void *buf, size_t len)
 
 /* ---- bring-up checkpoints ------------------------------------------------ */
 
+/* debug.qwz.stage; -1 means use the boot-arg / NVRAM limit. */
+int qwz_stage_sysctl = -1;
+
 static int
 qwz_stage_limit(void)
 {
 	static int limit = -1;
+
+	if (qwz_stage_sysctl >= 0)
+		return qwz_stage_sysctl;
 	IORegistryEntry *opts;
 	int v;
 
