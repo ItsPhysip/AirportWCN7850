@@ -47,8 +47,10 @@ fi
 xcrun clang -arch x86_64 -mmacosx-version-min=13.0 -mkernel -nostdinc -isystem "$MKSDK/Headers" \
   -DKERNEL -DQWZMAC_VERSION=\"$VERSION\" -x c -c kmod/kmod_info.c -o "$OBJ/kmod_info.o"
 
-xcrun clang++ -arch x86_64 -mmacosx-version-min=13.0 -fapple-kext -nostdlib -Xlinker -kext -Xlinker -no_data_const \
+# Classic ld64, as the reference kexts were linked with; debug STABS are stripped afterwards (keepsyms=1 only needs the symbol table).
+xcrun clang++ -arch x86_64 -mmacosx-version-min=13.0 -fapple-kext -nostdlib -Xlinker -kext -Xlinker -no_data_const -Xlinker -ld_classic \
   -L"$MKSDK/Library/x86_64" -lkmodc++ -lkmod -lcc_kext "$OBJ"/*.o -o "$KEXT/Contents/MacOS/QwzMac"
+strip -S "$KEXT/Contents/MacOS/QwzMac"
 # Without these the kernel and OpenCore reject the kext ("Invalid Parameter").
 for sym in _kmod_info __start __stop __realmain; do
   nm "$KEXT/Contents/MacOS/QwzMac" | grep -q " $sym\$" || { echo "STOP: $sym missing from the kext"; exit 1; }

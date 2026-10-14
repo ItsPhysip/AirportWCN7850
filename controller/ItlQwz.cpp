@@ -65,8 +65,10 @@ static volatile int qwz_test_thread_ran;
 static void
 qwz_test_thread(void *, wait_result_t)
 {
+	qwz_log("qwz: test thread running, blocking for 20 ms\n");
+	IOSleep(20);	/* block, so the thread is context-switched like a taskq thread */
 	qwz_test_thread_ran = 1;
-	qwz_log("qwz: test thread running, exiting\n");
+	qwz_log("qwz: test thread resumed, exiting\n");
 	thread_terminate(current_thread());
 }
 
@@ -131,7 +133,7 @@ ItlQwz::attach(IOPCIDevice *device)
 		thread_t t;
 		if (kernel_thread_start(qwz_test_thread, NULL, &t) == KERN_SUCCESS) {
 			thread_deallocate(t);
-			IOSleep(50);
+			IOSleep(200);
 			QWZLOG("test thread result: %d (1 = it ran)", qwz_test_thread_ran);
 		} else
 			QWZLOG("kernel_thread_start failed");
