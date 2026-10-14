@@ -411,6 +411,7 @@ void itlwm::startThreadCall(thread_call_param_t owner, thread_call_param_t)
 /* ---- debug.qwz sysctls ------------------------------------------------- */
 
 extern int qwz_stage_sysctl;	/* qwz/qwz_compat.cpp */
+
 static itlwm *qwz_sysctl_owner;
 
 static int
@@ -431,6 +432,14 @@ qwz_sysctl_start(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_re
  * whether logging from this kext is what hangs. 1 = no logging, 2 = IOLog,
  * 3 = printf, 4 = os_log. Touches no hardware.
  */
+static thread_call_t qwz_ping_call;
+
+static void
+qwz_ping_thread(thread_call_param_t, thread_call_param_t)
+{
+    IOLog("qwz: ping from a thread call\n");
+}
+
 static int
 qwz_sysctl_ping(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
 {
@@ -451,6 +460,21 @@ qwz_sysctl_ping(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req
     case 4:
         os_log(OS_LOG_DEFAULT, "qwz: ping via os_log");
         break;
+    case 5:
+        /* An empty kernel thread call, as the start request schedules. */
+        if (qwz_ping_call == NULL)
+            qwz_ping_call = thread_call_allocate(qwz_ping_thread, NULL);
+        if (qwz_ping_call == NULL)
+            return ENOMEM;
+        thread_call_enter(qwz_ping_call);
+        break;
+    case 6:
+        /* One PCI config read of the card, as the bring-up's first access. */
+        if (qwz_sysctl_owner == NULL || qwz_sysctl_owner->pciNub == NULL)
+            return ENXIO;
+        IOLog("qwz: ping config read: vendor 0x%04x\n",
+            qwz_sysctl_owner->pciNub->configRead16(kIOPCIConfigVendorID));
+        break;
     default:
         return EINVAL;
     }
@@ -461,7 +485,7 @@ SYSCTL_NODE(_debug, OID_AUTO, qwz, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "QwzMac");
 SYSCTL_PROC(_debug_qwz, OID_AUTO, start, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
     0, 0, qwz_sysctl_start, "I", "write 1 to run the bring-up");
 SYSCTL_PROC(_debug_qwz, OID_AUTO, ping, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
-    0, 0, qwz_sysctl_ping, "I", "log once: 1 none, 2 IOLog, 3 printf, 4 os_log");
+    0, 0, qwz_sysctl_ping, "I", "1 none, 2 IOLog, 3 printf, 4 os_log, 5 thread call, 6 one PCI config read");
 SYSCTL_INT(_debug_qwz, OID_AUTO, stage, CTLFLAG_RW | CTLFLAG_LOCKED,
     &qwz_stage_sysctl, 0, "stop the bring-up before this stage (-1: no limit)");
 
