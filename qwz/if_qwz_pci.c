@@ -651,6 +651,22 @@ qwz_pcic_get_user_msi_vector(struct qwz_softc *sc, char *user_name,
 	return EINVAL;
 }
 
+#ifdef __APPLE__
+/* Release every MSI vector that attach established, not only vector 0. */
+static void
+qwz_pci_disestablish_all(struct qwz_pci_softc *psc)
+{
+	int i;
+
+	for (i = 0; i < QWZ_NUM_MSI_VEC; i++) {
+		if (psc->sc_ih[i] != NULL) {
+			pci_intr_disestablish(psc->sc_pc, psc->sc_ih[i]);
+			psc->sc_ih[i] = NULL;
+		}
+	}
+}
+#endif
+
 void
 qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 {
@@ -983,9 +999,14 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	memcpy(ifp->if_xname, sc->sc_dev.dv_xname, IFNAMSIZ);
 	if_attach(ifp);
 	ieee80211_ifattach(ifp, pa->pa_controller);	/* macOS: itl80211 signatures */
-	ieee80211_media_init(ifp);
-
+	/*
+	 * macOS: install both node hooks before ieee80211_media_init allocates
+	 * ic_bss, so every node (ic_bss included) is a full struct qwz_node and
+	 * is freed by the allocator that created it.
+	 */
 	ic->ic_node_alloc = qwz_node_alloc;
+	ic->ic_node_free = qwz_node_free;
+	ieee80211_media_init(ifp);
 
 	/* Override 802.11 state transition machine. */
 	sc->sc_newstate = ic->ic_newstate;
@@ -1037,8 +1058,7 @@ err_vif_free:
 	qwz_vif_free(sc);
 err_pci_disable_msi:
 err_pci_free_region:
-	pci_intr_disestablish(psc->sc_pc, psc->sc_ih[0]);
-	psc->sc_ih[0] = NULL;	/* macOS: detach must not release it again */
+	qwz_pci_disestablish_all(psc);	/* macOS: detach must not release them again */
 	return;
 }
 
@@ -1056,10 +1076,7 @@ qwz_pci_detach(struct device *self, int flags)
 		qwz_core_deinit(sc);
 	rw_exit(&sc->ioctl_rwl);
 
-	if (psc->sc_ih[0]) {
-		pci_intr_disestablish(psc->sc_pc, psc->sc_ih[0]);
-		psc->sc_ih[0] = NULL;
-	}
+	qwz_pci_disestablish_all(psc);
 
 	qwz_detach(sc);
 	qwz_vif_free(sc);
@@ -4285,8 +4302,8 @@ qwz_pci_macos_detach(struct qwz_softc *sc)
 
 	if (sc->sc_ic.ic_if.if_softc == sc)
 		qwz_pci_detach(&sc->sc_dev, 0);
-	else if (psc->sc_ih[0])
-		pci_intr_disestablish(psc->sc_pc, psc->sc_ih[0]);
+	else
+		qwz_pci_disestablish_all(psc);
 	free(psc, M_DEVBUF, sizeof(*psc));
 }
 #endif /* __APPLE__ */

@@ -288,7 +288,7 @@ task_set(struct task *t, void (*fn)(void *), void *arg, const char *name)
     t->t_func = fn;
     t->t_arg = arg;
     t->t_flags = 0;
-    memcpy(t->name, name, sizeof(t->name));
+    strlcpy(t->name, name, sizeof(t->name));
 }
 
 int
