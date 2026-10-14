@@ -11,7 +11,7 @@ disk=$(diskutil list external physical | awk '/^\/dev\/disk/{d=$1} /EFI/{print d
 [ -n "$disk" ] || { echo "STOP: no external USB disk with an EFI partition"; exit 1; }
 part=${disk}s1
 sudo diskutil mount "$part" >/dev/null
-vol=$(mount | awk -v p="/dev/$part" '$1==p{print $3}')
+vol=$(mount | awk -v p="$part" '$1==p{print $3}')
 CFG=$vol/EFI/OC/config.plist
 [ -f "$CFG" ] || { echo "STOP: $CFG not found"; exit 1; }
 rm -rf "$vol/EFI/OC/Kexts/QwzMac.kext"
