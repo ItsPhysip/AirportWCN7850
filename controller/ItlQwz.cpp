@@ -74,7 +74,7 @@ ItlQwz::attachGated(OSObject *owner, void *arg0, void *, void *, void *)
 	struct pci_attach_args *pa = (struct pci_attach_args *)arg0;
 	int err;
 
-	if (!qwz_stage_ok(2, "enter the qwz attach holding the gate"))
+	if (!qwz_stage_ok(3, "inside the qwz attach, holding the gate"))
 		return kIOReturnError;
 
 	that->sc = qwz_pci_macos_alloc();
@@ -131,6 +131,8 @@ ItlQwz::attach(IOPCIDevice *device)
 	 * Attach runs on the IOService start thread holding the gate, so the
 	 * firmware boot can tsleep() while the workloop delivers interrupts.
 	 */
+	if (!qwz_stage_ok(2, "take the command gate (runAction)"))
+		return false;
 	ret = qwz_hal_gate->runAction(attachGated, &pa);
 	if (ret != kIOReturnSuccess)
 		return false;
