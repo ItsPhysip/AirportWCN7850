@@ -342,7 +342,16 @@ bool itlwm::start(IOService *provider)
      * SimpleMtkWlan. qwz_stage=<n> stops it before stage n.
      */
     if (!finishStart()) {
-        qwz_log_stage("bring-up did not complete; the driver stays idle");
+        /*
+         * Stopped on purpose by qwz_stage: keep the driver loaded and idle
+         * (task-queue threads, gate and workloop stay), so a test boot only
+         * exercises the stages that ran, not the teardown as well.
+         */
+        if (qwz_stage_hit_limit()) {
+            qwz_log_stage("idle at the qwz_stage limit (no interface)");
+            return true;
+        }
+        qwz_log_stage("bring-up failed; the driver is unloaded");
         super::stop(pciNub);
         releaseAll();
         return false;

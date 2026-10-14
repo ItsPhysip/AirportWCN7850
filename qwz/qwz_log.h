@@ -24,6 +24,7 @@ int	qwz_vlog(const char *fmt, va_list ap) __attribute__((format(printf, 1, 0)));
 void	qwz_log_set_target(IOService *);
 /* Records the current stage and republishes the log. */
 void	qwz_log_stage(const char *stage);
+int	qwz_stage_hit_limit(void);	/* qwz_compat.cpp: a checkpoint was refused by qwz_stage */
 /* Republishes the log ring as QwzMacLog. */
 void	qwz_log_publish(void);
 

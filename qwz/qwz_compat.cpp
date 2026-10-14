@@ -1027,6 +1027,14 @@ qwz_stage_limit(void)
 	return limit;
 }
 
+static bool qwz_stage_limited;
+
+int
+qwz_stage_hit_limit(void)
+{
+	return qwz_stage_limited;
+}
+
 int
 qwz_stage_ok(int n, const char *what)
 {
@@ -1035,6 +1043,7 @@ qwz_stage_ok(int n, const char *what)
 	if (n > qwz_stage_limit()) {
 		snprintf(stage, sizeof(stage), "%d %s: not run (qwz_stage limit)", n, what);
 		qwz_log_stage(stage);
+		qwz_stage_limited = true;
 		return 0;
 	}
 	snprintf(stage, sizeof(stage), "%d %s", n, what);
