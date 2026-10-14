@@ -149,7 +149,16 @@ taskq_thread(void *xtq)
     thread_terminate(current_thread());
 }
 
+static void taskq_create_thread_body(void *arg);
+
+/* QwzMac: end the thread explicitly instead of returning from the continuation. */
 void taskq_create_thread(void *arg)
+{
+    taskq_create_thread_body(arg);
+    thread_terminate(current_thread());
+}
+
+static void taskq_create_thread_body(void *arg)
 {
     struct taskq *tq = (struct taskq *)arg;
     int rv;

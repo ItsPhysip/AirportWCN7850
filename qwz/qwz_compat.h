@@ -455,6 +455,7 @@ int	loadfirmware(const char *, u_char **, size_t *);
  */
 int	qwz_stage_ok(int, const char *);
 int	qwz_stage_hit_limit(void);	/* a checkpoint was refused by the limit */
+void	qwz_stage_reset(void);		/* clear that flag before a new attempt */
 
 /* Debug: attach a copy of `buf` to the controller as an IORegistry property. */
 int	qwz_compat_publish_blob(const char *, const void *, size_t);

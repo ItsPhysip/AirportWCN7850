@@ -1018,6 +1018,8 @@ qwz_compat_publish_blob(const char *key, const void *buf, size_t len)
 
 /* ---- bring-up checkpoints ------------------------------------------------ */
 
+int qwz_stage_sysctl = -1;	/* debug.qwz.stage: -1 = use the boot-time limit */
+
 static int
 qwz_stage_limit(void)
 {
@@ -1026,6 +1028,8 @@ qwz_stage_limit(void)
 	IORegistryEntry *opts;
 	int v;
 
+	if (qwz_stage_sysctl >= 0)
+		return qwz_stage_sysctl;
 	if (limit >= 0)
 		return limit;
 	/*
@@ -1060,6 +1064,12 @@ int
 qwz_stage_hit_limit(void)
 {
 	return qwz_stage_limited;
+}
+
+void
+qwz_stage_reset(void)
+{
+	qwz_stage_limited = false;
 }
 
 int

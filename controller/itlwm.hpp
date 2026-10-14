@@ -93,6 +93,13 @@ public:
     
     bool createMediumTables(const IONetworkMedium **primary);
     bool finishStart();	/* QwzMac: the hardware half of start() */
+    /* QwzMac: `sysctl debug.qwz.start=1` reruns finishStart on a thread call. */
+    bool requestBringUp();
+    static void startThreadCall(thread_call_param_t owner, thread_call_param_t);
+    thread_call_t fStartCall;
+    volatile bool fStopping;
+    enum { kBringUpIdle = 0, kBringUpRunning = 1, kBringUpDone = 2 };
+    volatile UInt32 fBringUp;
     
 public:
     IOInterruptEventSource* fInterrupt;

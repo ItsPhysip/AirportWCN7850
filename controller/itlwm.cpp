@@ -20,6 +20,7 @@
 #include <IOKit/network/IONetworkMedium.h>
 #include <net/ethernet.h>
 #include "qwz_log.h"
+#include <sys/sysctl.h>
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_node.h>
 #include <net80211/ieee80211_ioctl.h>
@@ -34,6 +35,9 @@ IOCommandGate *_fCommandGate;
 bool itlwm::init(OSDictionary *properties)
 {
     fNetIf = NULL;
+    fStartCall = NULL;
+    fStopping = false;
+    fBringUp = kBringUpIdle;
     return super::init(properties);
 }
 
@@ -292,6 +296,9 @@ void itlwm::associateSSID(const char *ssid, const char *pwd)
     }
 }
 
+void qwz_sysctl_register(itlwm *owner);
+void qwz_sysctl_unregister(void);
+
 bool itlwm::start(IOService *provider)
 {
     int boot_value = 0;
@@ -338,25 +345,105 @@ bool itlwm::start(IOService *provider)
     
     /*
      * QwzMac: the bring-up runs here in start(), as in itlwm and
-     * SimpleMtkWlan. qwz_stage=<n> stops it before stage n.
+     * SimpleMtkWlan. qwz_stage=<n> stops it before stage n; the driver then
+     * stays loaded and idle, and `sudo sysctl debug.qwz.stage=M` followed by
+     * `sudo sysctl debug.qwz.start=1` reruns it up to stage M on a thread
+     * call, so the stages can be stepped through without rebooting.
      */
+    fStartCall = thread_call_allocate(&itlwm::startThreadCall, this);
+    qwz_sysctl_register(this);
+    fBringUp = kBringUpRunning;
     if (!finishStart()) {
-        /*
-         * Stopped on purpose by qwz_stage: keep the driver loaded and idle
-         * (task-queue threads, gate and workloop stay), so a test boot only
-         * exercises the stages that ran, not the teardown as well.
-         */
+        fBringUp = kBringUpIdle;
         if (qwz_stage_hit_limit()) {
-            qwz_log_stage("idle at the qwz_stage limit (no interface)");
+            qwz_log_stage("idle at the qwz_stage limit (no interface); sysctl debug.qwz.start=1 continues");
             return true;
         }
         qwz_log_stage("bring-up failed; the driver is unloaded");
+        qwz_sysctl_unregister();
         super::stop(pciNub);
         releaseAll();
         return false;
     }
+    fBringUp = kBringUpDone;
     qwz_log_stage("running");
     return true;
+}
+
+bool itlwm::requestBringUp()
+{
+    if (fStopping || fStartCall == NULL ||
+        !OSCompareAndSwap(kBringUpIdle, kBringUpRunning, &fBringUp))
+        return false;
+    qwz_log("qwz: bring-up requested (sysctl)\n");
+    retain();
+    if (thread_call_enter(fStartCall))
+        release();
+    return true;
+}
+
+void itlwm::startThreadCall(thread_call_param_t owner, thread_call_param_t)
+{
+    itlwm *that = (itlwm *)owner;
+
+    if (!that->fStopping && that->finishStart()) {
+        that->fBringUp = kBringUpDone;
+        qwz_log_stage("running");
+    } else {
+        that->fBringUp = kBringUpIdle;
+        qwz_log_stage(qwz_stage_hit_limit() ?
+            "idle at the debug.qwz.stage limit; raise it and start again" :
+            "bring-up failed; the driver stays idle, start again to retry");
+    }
+    that->release();
+}
+
+/* ---- debug.qwz sysctls ------------------------------------------------- */
+
+extern int qwz_stage_sysctl;	/* qwz/qwz_compat.cpp */
+static itlwm *qwz_sysctl_owner;
+
+static int
+qwz_sysctl_start(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+    int v = 0;
+    int err = sysctl_handle_int(oidp, &v, 0, req);
+
+    if (err || req->newptr == USER_ADDR_NULL)
+        return err;
+    if (v != 1 || qwz_sysctl_owner == NULL)
+        return EINVAL;
+    return qwz_sysctl_owner->requestBringUp() ? 0 : EBUSY;
+}
+
+SYSCTL_NODE(_debug, OID_AUTO, qwz, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "QwzMac");
+SYSCTL_PROC(_debug_qwz, OID_AUTO, start, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, 0, qwz_sysctl_start, "I", "write 1 to run the bring-up");
+SYSCTL_INT(_debug_qwz, OID_AUTO, stage, CTLFLAG_RW | CTLFLAG_LOCKED,
+    &qwz_stage_sysctl, 0, "stop the bring-up before this stage (-1: boot-time limit)");
+
+static bool qwz_sysctl_registered;
+
+void qwz_sysctl_register(itlwm *owner)
+{
+    qwz_sysctl_owner = owner;
+    if (qwz_sysctl_registered)
+        return;
+    sysctl_register_oid(&sysctl__debug_qwz);
+    sysctl_register_oid(&sysctl__debug_qwz_start);
+    sysctl_register_oid(&sysctl__debug_qwz_stage);
+    qwz_sysctl_registered = true;
+}
+
+void qwz_sysctl_unregister(void)
+{
+    qwz_sysctl_owner = NULL;
+    if (!qwz_sysctl_registered)
+        return;
+    sysctl_unregister_oid(&sysctl__debug_qwz_stage);
+    sysctl_unregister_oid(&sysctl__debug_qwz_start);
+    sysctl_unregister_oid(&sysctl__debug_qwz);
+    qwz_sysctl_registered = false;
 }
 
 bool itlwm::finishStart()
@@ -484,6 +571,14 @@ IOReturn itlwm::selectMedium(const IONetworkMedium *medium) {
 void itlwm::stop(IOService *provider)
 {
     XYLog("%s\n", __FUNCTION__);
+    fStopping = true;
+    qwz_sysctl_unregister();
+    if (fStartCall != NULL) {
+        if (thread_call_cancel(fStartCall))
+            release();
+        thread_call_free(fStartCall);
+        fStartCall = NULL;
+    }
     super::stop(provider);
     if (fNetIf != NULL) {
         struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
