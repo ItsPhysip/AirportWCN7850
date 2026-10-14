@@ -60,6 +60,16 @@ qwz_if_watchdog_wrapper(struct _ifnet *ifp)
 	qwz_hal_gate->runAction(qwz_watchdog_gated, ifp);
 }
 
+static volatile int qwz_test_thread_ran;
+
+static void
+qwz_test_thread(void *, wait_result_t)
+{
+	qwz_test_thread_ran = 1;
+	qwz_log("qwz: test thread running, exiting\n");
+	thread_terminate(current_thread());
+}
+
 bool
 ItlQwz::qwz_match(IOPCIDevice *device)
 {
@@ -74,7 +84,7 @@ ItlQwz::attachGated(OSObject *owner, void *arg0, void *, void *, void *)
 	struct pci_attach_args *pa = (struct pci_attach_args *)arg0;
 	int err;
 
-	if (!qwz_stage_ok(3, "inside the qwz attach, holding the gate"))
+	if (!qwz_stage_ok(4, "inside the qwz attach, holding the gate"))
 		return kIOReturnError;
 
 	that->sc = qwz_pci_macos_alloc();
@@ -111,7 +121,22 @@ ItlQwz::attach(IOPCIDevice *device)
 	qwz_hal_gate = getMainCommandGate();
 	qwz_compat_set_gate(qwz_hal_gate);
 	qwz_compat_set_controller(getController());
-	if (!qwz_stage_ok(1, "driver setup: task queue thread"))
+	/*
+	 * Stage 1 only creates a kernel thread that logs and exits, to tell a
+	 * broken kernel_thread_start apart from the task-queue code itself.
+	 */
+	if (!qwz_stage_ok(1, "kernel_thread_start test (a thread that logs and exits)"))
+		return false;
+	{
+		thread_t t;
+		if (kernel_thread_start(qwz_test_thread, NULL, &t) == KERN_SUCCESS) {
+			thread_deallocate(t);
+			IOSleep(50);
+			QWZLOG("test thread result: %d (1 = it ran)", qwz_test_thread_ran);
+		} else
+			QWZLOG("kernel_thread_start failed");
+	}
+	if (!qwz_stage_ok(2, "driver setup: task queue thread (taskq_init)"))
 		return false;
 	static bool taskq_ready;
 	if (!taskq_ready) {	/* a retried bring-up must not start systq twice */
@@ -131,7 +156,7 @@ ItlQwz::attach(IOPCIDevice *device)
 	 * Attach runs on the IOService start thread holding the gate, so the
 	 * firmware boot can tsleep() while the workloop delivers interrupts.
 	 */
-	if (!qwz_stage_ok(2, "take the command gate (runAction)"))
+	if (!qwz_stage_ok(3, "take the command gate (runAction)"))
 		return false;
 	ret = qwz_hal_gate->runAction(attachGated, &pa);
 	if (ret != kIOReturnSuccess)
