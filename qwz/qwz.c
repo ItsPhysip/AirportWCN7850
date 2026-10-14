@@ -19152,7 +19152,7 @@ qwz_core_init(struct qwz_softc *sc)
 		    sc->sc_dev.dv_xname, error);
 		qwz_core_init_cleanup(sc, 0);
 	}
-	else if (!qwz_stage_ok(14, "powered up; next is the QMI handshake")) {
+	else if (!qwz_stage_ok(15, "powered up; next is the QMI handshake")) {
 		qwz_core_init_cleanup(sc, 0);
 		error = EIO;
 	}
