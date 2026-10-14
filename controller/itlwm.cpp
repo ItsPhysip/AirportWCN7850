@@ -20,6 +20,7 @@
 #include <IOKit/network/IONetworkMedium.h>
 #include <net/ethernet.h>
 #include <sys/sysctl.h>
+#include <os/log.h>
 int qwz_stage_ok(int, const char *);	/* qwz/qwz_compat.cpp */
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_node.h>
@@ -425,9 +426,42 @@ qwz_sysctl_start(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_re
     return qwz_sysctl_owner->requestBringUp() ? 0 : EBUSY;
 }
 
+/*
+ * debug.qwz.ping: exercise one logging path and nothing else, to find out
+ * whether logging from this kext is what hangs. 1 = no logging, 2 = IOLog,
+ * 3 = printf, 4 = os_log. Touches no hardware.
+ */
+static int
+qwz_sysctl_ping(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+    int v = 0;
+    int err = sysctl_handle_int(oidp, &v, 0, req);
+
+    if (err || req->newptr == USER_ADDR_NULL)
+        return err;
+    switch (v) {
+    case 1:
+        break;
+    case 2:
+        IOLog("qwz: ping via IOLog\n");
+        break;
+    case 3:
+        printf("qwz: ping via printf\n");
+        break;
+    case 4:
+        os_log(OS_LOG_DEFAULT, "qwz: ping via os_log");
+        break;
+    default:
+        return EINVAL;
+    }
+    return 0;
+}
+
 SYSCTL_NODE(_debug, OID_AUTO, qwz, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "QwzMac");
 SYSCTL_PROC(_debug_qwz, OID_AUTO, start, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
     0, 0, qwz_sysctl_start, "I", "write 1 to run the bring-up");
+SYSCTL_PROC(_debug_qwz, OID_AUTO, ping, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, 0, qwz_sysctl_ping, "I", "log once: 1 none, 2 IOLog, 3 printf, 4 os_log");
 SYSCTL_INT(_debug_qwz, OID_AUTO, stage, CTLFLAG_RW | CTLFLAG_LOCKED,
     &qwz_stage_sysctl, 0, "stop the bring-up before this stage (-1: no limit)");
 
@@ -441,6 +475,7 @@ void qwz_sysctl_register(itlwm *owner)
     sysctl_register_oid(&sysctl__debug_qwz);
     sysctl_register_oid(&sysctl__debug_qwz_start);
     sysctl_register_oid(&sysctl__debug_qwz_stage);
+    sysctl_register_oid(&sysctl__debug_qwz_ping);
     qwz_sysctl_registered = true;
 }
 
@@ -449,6 +484,7 @@ void qwz_sysctl_unregister(void)
     qwz_sysctl_owner = NULL;
     if (!qwz_sysctl_registered)
         return;
+    sysctl_unregister_oid(&sysctl__debug_qwz_ping);
     sysctl_unregister_oid(&sysctl__debug_qwz_stage);
     sysctl_unregister_oid(&sysctl__debug_qwz_start);
     sysctl_unregister_oid(&sysctl__debug_qwz);
