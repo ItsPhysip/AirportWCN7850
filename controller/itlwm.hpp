@@ -36,10 +36,6 @@ enum
 
 #define kWatchDogTimerPeriod 1000
 
-class itlwm;
-void qwz_sysctl_register(itlwm *owner);
-void qwz_sysctl_unregister(void);
-
 class itlwm : public IOEthernetController {
     OSDeclareDefaultStructors(itlwm)
     
@@ -96,14 +92,7 @@ public:
     void unregistPM();
     
     bool createMediumTables(const IONetworkMedium **primary);
-    /* QwzMac: deferred bring-up, see start() */
-    static void startThreadCall(thread_call_param_t owner, thread_call_param_t);
-    bool finishStart();
-    thread_call_t fStartCall;
-    volatile bool fStopping;
-    enum { kBringUpIdle, kBringUpRunning, kBringUpDone };
-    volatile UInt32 fBringUp;
-    bool requestBringUp();
+    bool finishStart();	/* QwzMac: the hardware half of start() */
     
 public:
     IOInterruptEventSource* fInterrupt;

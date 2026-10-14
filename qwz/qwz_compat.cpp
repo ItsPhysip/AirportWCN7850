@@ -12,7 +12,7 @@
 #include <kern/clock.h>
 #include <kern/thread.h>
 
-#define QWZLOG(fmt, ...)	IOLog("qwz: " fmt "\n", ##__VA_ARGS__)
+#define QWZLOG(fmt, ...)	qwz_log("qwz: " fmt "\n", ##__VA_ARGS__)
 
 /* ---- malloc(9) -------------------------------------------------------- */
 
@@ -999,16 +999,11 @@ qwz_compat_publish_blob(const char *key, const void *buf, size_t len)
 
 /* ---- bring-up checkpoints ------------------------------------------------ */
 
-/* debug.qwz.stage; -1 means use the boot-arg / NVRAM limit. */
-int qwz_stage_sysctl = -1;
-
 static int
 qwz_stage_limit(void)
 {
 	static int limit = -1;
 
-	if (qwz_stage_sysctl >= 0)
-		return qwz_stage_sysctl;
 	IORegistryEntry *opts;
 	int v;
 
@@ -1035,10 +1030,14 @@ qwz_stage_limit(void)
 int
 qwz_stage_ok(int n, const char *what)
 {
+	char stage[160];
+
 	if (n > qwz_stage_limit()) {
-		QWZLOG("stage %d (%s) not run: stage limit reached", n, what);
+		snprintf(stage, sizeof(stage), "%d %s: not run (qwz_stage limit)", n, what);
+		qwz_log_stage(stage);
 		return 0;
 	}
-	QWZLOG("stage %d: %s", n, what);
+	snprintf(stage, sizeof(stage), "%d %s", n, what);
+	qwz_log_stage(stage);
 	return 1;
 }

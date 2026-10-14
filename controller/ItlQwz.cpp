@@ -13,7 +13,7 @@
 #undef free
 #undef wakeup
 
-#define QWZLOG(fmt, ...)	IOLog("qwz: " fmt "\n", ##__VA_ARGS__)
+#define QWZLOG(fmt, ...)	qwz_log("qwz: " fmt "\n", ##__VA_ARGS__)
 
 /* if_qwz_pci.c */
 struct qwz_softc *qwz_pci_macos_alloc(void);

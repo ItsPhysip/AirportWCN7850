@@ -19,9 +19,7 @@
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/network/IONetworkMedium.h>
 #include <net/ethernet.h>
-#include <sys/sysctl.h>
-#include <os/log.h>
-int qwz_stage_ok(int, const char *);	/* qwz/qwz_compat.cpp */
+#include "qwz_log.h"
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_node.h>
 #include <net80211/ieee80211_ioctl.h>
@@ -35,9 +33,6 @@ IOCommandGate *_fCommandGate;
 
 bool itlwm::init(OSDictionary *properties)
 {
-    fStartCall = NULL;
-    fStopping = false;
-    fBringUp = kBringUpIdle;
     fNetIf = NULL;
     return super::init(properties);
 }
@@ -80,6 +75,8 @@ IOService* itlwm::probe(IOService *provider, SInt32 *score)
     if (!device) {
         return NULL;
     }
+    qwz_log_set_target(device);
+    qwz_log_stage("probe");
     int qwzoff = 0;
     if (PE_parse_boot_argn("-qwzoff", &qwzoff, sizeof(qwzoff))) {
         IOLog("qwz: disabled by the -qwzoff boot-arg\n");
@@ -340,189 +337,32 @@ bool itlwm::start(IOService *provider)
     }
     fHalService->initWithController(this, _fWorkloop, _fCommandGate);
     
-    if (PE_parse_boot_argn("-novht", &boot_value, sizeof(boot_value)))
-        fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOVHT;
-    if (PE_parse_boot_argn("-noht40", &boot_value, sizeof(boot_value)))
-        fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOHT40;
-    
     /*
-     * QwzMac: the firmware boot takes seconds and macOS waits for start()
-     * before it carries on booting, so the rest of the bring-up runs on a
-     * thread call. qwz_delay=<seconds> postpones it, leaving time after
-     * login to set -qwzoff if bring-up crashes.
+     * QwzMac: the bring-up runs here in start(), as in itlwm and
+     * SimpleMtkWlan. qwz_stage=<n> stops it before stage n.
      */
-    uint32_t delay = 0;
-    uint64_t deadline;
-    PE_parse_boot_argn("qwz_delay", &delay, sizeof(delay));
-    fStartCall = thread_call_allocate(&itlwm::startThreadCall, this);
-    if (fStartCall == NULL) {
+    if (!finishStart()) {
+        qwz_log_stage("bring-up did not complete; the driver stays idle");
         super::stop(pciNub);
         releaseAll();
         return false;
     }
-    qwz_sysctl_register(this);
-#ifdef QWZ_DEBUG
-    /*
-     * Debug builds wait to be told: `sudo sysctl debug.qwz.start=1`, with
-     * `log stream` already running, so every bring-up stage is on screen
-     * even if the machine freezes. qwz_auto=1 restores the timed start.
-     */
-    int automatic = 0;
-    if (!PE_parse_boot_argn("qwz_auto", &automatic, sizeof(automatic)) || !automatic) {
-        IOLog("qwz: loaded; start the bring-up with: sudo sysctl debug.qwz.start=1\n");
-        return true;
-    }
-#endif
-    IOLog("qwz: bring-up scheduled in %u s\n", delay);
-    fBringUp = kBringUpRunning;
-    retain();
-    clock_interval_to_deadline(delay, kSecondScale, &deadline);
-    thread_call_enter_delayed(fStartCall, deadline);
+    qwz_log_stage("running");
     return true;
-}
-
-bool itlwm::requestBringUp()
-{
-    if (fStopping || fStartCall == NULL ||
-        !OSCompareAndSwap(kBringUpIdle, kBringUpRunning, &fBringUp))
-        return false;
-    IOLog("qwz: bring-up requested\n");
-    retain();
-    if (thread_call_enter(fStartCall))
-        release();
-    return true;
-}
-
-void itlwm::startThreadCall(thread_call_param_t owner, thread_call_param_t)
-{
-    itlwm *that = (itlwm *)owner;
-
-    if (!that->fStopping && that->finishStart()) {
-        that->fBringUp = kBringUpDone;
-        IOLog("qwz: bring-up finished\n");
-    } else {
-        /* Failed or stopped at the stage limit: debug.qwz.start=1 retries. */
-        that->fBringUp = kBringUpIdle;
-        IOLog("qwz: bring-up did not complete; the driver stays idle\n");
-    }
-    that->release();
-}
-
-/* ---- debug.qwz sysctls ------------------------------------------------- */
-
-extern int qwz_stage_sysctl;	/* qwz/qwz_compat.cpp */
-
-static itlwm *qwz_sysctl_owner;
-
-static int
-qwz_sysctl_start(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
-{
-    int v = 0;
-    int err = sysctl_handle_int(oidp, &v, 0, req);
-
-    if (err || req->newptr == USER_ADDR_NULL)
-        return err;
-    if (v != 1 || qwz_sysctl_owner == NULL)
-        return EINVAL;
-    return qwz_sysctl_owner->requestBringUp() ? 0 : EBUSY;
-}
-
-/*
- * debug.qwz.ping: exercise one logging path and nothing else, to find out
- * whether logging from this kext is what hangs. 1 = no logging, 2 = IOLog,
- * 3 = printf, 4 = os_log. Touches no hardware.
- */
-static thread_call_t qwz_ping_call;
-
-static void
-qwz_ping_thread(thread_call_param_t, thread_call_param_t)
-{
-    IOLog("qwz: ping from a thread call\n");
-}
-
-static int
-qwz_sysctl_ping(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
-{
-    int v = 0;
-    int err = sysctl_handle_int(oidp, &v, 0, req);
-
-    if (err || req->newptr == USER_ADDR_NULL)
-        return err;
-    switch (v) {
-    case 1:
-        break;
-    case 2:
-        IOLog("qwz: ping via IOLog\n");
-        break;
-    case 3:
-        printf("qwz: ping via printf\n");
-        break;
-    case 4:
-        os_log(OS_LOG_DEFAULT, "qwz: ping via os_log");
-        break;
-    case 5:
-        /* An empty kernel thread call, as the start request schedules. */
-        if (qwz_ping_call == NULL)
-            qwz_ping_call = thread_call_allocate(qwz_ping_thread, NULL);
-        if (qwz_ping_call == NULL)
-            return ENOMEM;
-        thread_call_enter(qwz_ping_call);
-        break;
-    case 6:
-        /* One PCI config read of the card, as the bring-up's first access. */
-        if (qwz_sysctl_owner == NULL || qwz_sysctl_owner->pciNub == NULL)
-            return ENXIO;
-        IOLog("qwz: ping config read: vendor 0x%04x\n",
-            qwz_sysctl_owner->pciNub->configRead16(kIOPCIConfigVendorID));
-        break;
-    default:
-        return EINVAL;
-    }
-    return 0;
-}
-
-SYSCTL_NODE(_debug, OID_AUTO, qwz, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "QwzMac");
-SYSCTL_PROC(_debug_qwz, OID_AUTO, start, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
-    0, 0, qwz_sysctl_start, "I", "write 1 to run the bring-up");
-SYSCTL_PROC(_debug_qwz, OID_AUTO, ping, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
-    0, 0, qwz_sysctl_ping, "I", "1 none, 2 IOLog, 3 printf, 4 os_log, 5 thread call, 6 one PCI config read");
-SYSCTL_INT(_debug_qwz, OID_AUTO, stage, CTLFLAG_RW | CTLFLAG_LOCKED,
-    &qwz_stage_sysctl, 0, "stop the bring-up before this stage (-1: no limit)");
-
-static bool qwz_sysctl_registered;
-
-void qwz_sysctl_register(itlwm *owner)
-{
-    qwz_sysctl_owner = owner;
-    if (qwz_sysctl_registered)
-        return;
-    sysctl_register_oid(&sysctl__debug_qwz);
-    sysctl_register_oid(&sysctl__debug_qwz_start);
-    sysctl_register_oid(&sysctl__debug_qwz_stage);
-    sysctl_register_oid(&sysctl__debug_qwz_ping);
-    qwz_sysctl_registered = true;
-}
-
-void qwz_sysctl_unregister(void)
-{
-    qwz_sysctl_owner = NULL;
-    if (!qwz_sysctl_registered)
-        return;
-    sysctl_unregister_oid(&sysctl__debug_qwz_ping);
-    sysctl_unregister_oid(&sysctl__debug_qwz_stage);
-    sysctl_unregister_oid(&sysctl__debug_qwz_start);
-    sysctl_unregister_oid(&sysctl__debug_qwz);
-    qwz_sysctl_registered = false;
 }
 
 bool itlwm::finishStart()
 {
-    if (!qwz_stage_ok(0, "bring-up thread running"))
-        return false;
+    int boot_value = 0;
+
     if (!fHalService->attach(pciNub)) {
         XYLog("attach fail\n");
         return false;
     }
+    if (PE_parse_boot_argn("-novht", &boot_value, sizeof(boot_value)))
+        fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOVHT;
+    if (PE_parse_boot_argn("-noht40", &boot_value, sizeof(boot_value)))
+        fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOHT40;
     if (!attachInterface((IONetworkInterface **)&fNetIf, true)) {
         XYLog("attach to interface fail\n");
         fHalService->detach(pciNub);
@@ -530,13 +370,13 @@ bool itlwm::finishStart()
         return false;
     }
     fWatchdogWorkLoop = IOWorkLoop::workLoop();
-    if (fWatchdogWorkLoop == NULL) {
-        XYLog("init watchdog workloop fail\n");
-        return false;
-    }
-    watchdogTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &itlwm::watchdogAction));
-    if (!watchdogTimer) {
+    watchdogTimer = fWatchdogWorkLoop == NULL ? NULL :
+        IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &itlwm::watchdogAction));
+    if (watchdogTimer == NULL) {
         XYLog("init watchdog fail\n");
+        detachInterface(fNetIf, true);
+        OSSafeReleaseNULL(fNetIf);
+        fHalService->detach(pciNub);
         return false;
     }
     fWatchdogWorkLoop->addEventSource(watchdogTimer);
@@ -636,15 +476,6 @@ IOReturn itlwm::selectMedium(const IONetworkMedium *medium) {
 void itlwm::stop(IOService *provider)
 {
     XYLog("%s\n", __FUNCTION__);
-    fStopping = true;
-    qwz_sysctl_unregister();
-    if (fStartCall != NULL) {
-        /* A bring-up that has not run yet must not run after stop. */
-        if (thread_call_cancel_wait(fStartCall))
-            release();
-        thread_call_free(fStartCall);
-        fStartCall = NULL;
-    }
     super::stop(provider);
     if (fNetIf != NULL) {
         struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;

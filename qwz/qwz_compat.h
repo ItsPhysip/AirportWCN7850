@@ -41,6 +41,11 @@
 #include <sys/pcireg.h>
 #include <sys/endian.h>
 
+#include "qwz_log.h"
+
+/* qwz's printf output goes into the published log ring as well. */
+#define printf		qwz_log
+
 /* ---- names that differ in itl80211 ---------------------------------- */
 
 #define ifnet		_ifnet
