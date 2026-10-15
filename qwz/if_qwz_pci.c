@@ -1460,11 +1460,13 @@ qwz_pcic_ext_irq_enable(struct qwz_softc *sc)
 void
 qwz_pcic_ce_irq_enable(struct qwz_softc *sc, uint16_t ce_id)
 {
-	/* In case of one MSI vector, we handle irq enable/disable in a
-	 * uniform way since we only have one irq
+	/*
+	 * macOS: keep the software mask in single-vector mode too. Upstream
+	 * returned early here, so msi_ce_irqmask stayed 0 and qwz_ce_intr()
+	 * dropped every copy-engine interrupt as unexpected (the HTC connect
+	 * then timed out). The mask is bookkeeping only; nothing is masked
+	 * in hardware either way.
 	 */
-	if (!test_bit(ATH12K_FLAG_MULTI_MSI_VECTORS, sc->sc_flags))
-		return;
 
 	/* OpenBSD PCI stack does not yet implement MSI interrupt masking. */
 	sc->msi_ce_irqmask |= (1U << ce_id);
@@ -1473,11 +1475,13 @@ qwz_pcic_ce_irq_enable(struct qwz_softc *sc, uint16_t ce_id)
 void
 qwz_pcic_ce_irq_disable(struct qwz_softc *sc, uint16_t ce_id)
 {
-	/* In case of one MSI vector, we handle irq enable/disable in a
-	 * uniform way since we only have one irq
+	/*
+	 * macOS: keep the software mask in single-vector mode too. Upstream
+	 * returned early here, so msi_ce_irqmask stayed 0 and qwz_ce_intr()
+	 * dropped every copy-engine interrupt as unexpected (the HTC connect
+	 * then timed out). The mask is bookkeeping only; nothing is masked
+	 * in hardware either way.
 	 */
-	if (!test_bit(ATH12K_FLAG_MULTI_MSI_VECTORS, sc->sc_flags))
-		return;
 
 	/* OpenBSD PCI stack does not yet implement MSI interrupt masking. */
 	sc->msi_ce_irqmask &= ~(1U << ce_id);
