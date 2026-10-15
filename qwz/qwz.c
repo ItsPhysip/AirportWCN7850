@@ -258,6 +258,23 @@ qwz_init(struct ifnet *ifp)
 		sc->ns_nstate = IEEE80211_S_INIT;
 		sc->scan.state = ATH12K_SCAN_IDLE;
 		if (ifp->if_flags & IFF_UP) {
+#ifdef __APPLE__
+			/*
+			 * The firmware was left running by qwz_attach, so the
+			 * first interface-up lands here instead of in the full
+			 * init below, which is where the vdev is created. Without
+			 * a vdev the firmware ends every scan at once (EIO).
+			 */
+			if (sc->num_created_vdevs == 0) {
+				error = qwz_mac_start(sc);
+				if (error) {
+					printf("%s: could not start mac: %d\n",
+					    sc->sc_dev.dv_xname, error);
+					splx(s);
+					return error;
+				}
+			}
+#endif
 			refcnt_init(&sc->task_refs);
 			ifq_clr_oactive(&ifp->if_snd);
 			ifp->if_flags |= IFF_RUNNING;
