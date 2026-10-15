@@ -940,7 +940,9 @@ qwz_mclgetl(mbuf_t m, int how, size_t len)
 	if (m == NULL)
 		return NULL;
 	if (len <= MCLBYTES) {
-		mbuf_mclget((mbuf_how_t)how, MBUF_TYPE_DATA, &m);
+		errno_t e = mbuf_mclget((mbuf_how_t)how, MBUF_TYPE_DATA, &m);
+		if (e != 0 || !(mbuf_flags(m) & MBUF_EXT))
+			QWZLOG("mbuf_mclget(%zu) failed: %d", len, e);
 		return m;
 	}
 	/*
@@ -950,9 +952,12 @@ qwz_mclgetl(mbuf_t m, int how, size_t len)
 	buf = (caddr_t)IOMalloc(len);
 	if (buf == NULL)
 		return m;
-	if (mbuf_attachcluster((mbuf_how_t)how, MBUF_TYPE_DATA, &m, buf,
-	    qwz_extfree, len, NULL) != 0)
+	errno_t e = mbuf_attachcluster((mbuf_how_t)how, MBUF_TYPE_DATA, &m, buf,
+	    qwz_extfree, len, NULL);
+	if (e != 0) {
+		QWZLOG("mbuf_attachcluster(%zu) failed: %d", len, e);
 		IOFree(buf, len);
+	}
 	return m;
 }
 

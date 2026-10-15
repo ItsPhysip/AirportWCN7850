@@ -12580,6 +12580,7 @@ qwz_htc_alloc_mbuf(size_t payload_size)
 	else
 		MCLGETL(m, M_DONTWAIT, size);
 	if ((M_FLAGS(m) & M_EXT) == 0) {
+		printf("%s: no cluster for a %zu-byte HTC message\n", __func__, size);
 		m_freem(m);
 		return NULL;
 	}
@@ -17318,8 +17319,10 @@ qwz_wmi_send_scan_start_cmd(struct qwz_softc *sc,
 	}
 
 	m = qwz_wmi_alloc_mbuf(len);
-	if (!m)
+	if (!m) {
+		printf("%s: cannot allocate a %d-byte scan command\n", __func__, len);
 		return ENOMEM;
+	}
 
 	ptr = (void *)(mtod(m, uint8_t *) + sizeof(struct ath12k_htc_hdr) +
 	    sizeof(struct wmi_cmd_hdr));
@@ -24222,6 +24225,8 @@ qwz_scan(struct qwz_softc *sc)
 
 	arg = malloc(sizeof(*arg), M_DEVBUF, M_ZERO | M_NOWAIT);
 	if (!arg) {
+		printf("%s: cannot allocate %zu bytes of scan parameters\n",
+		    __func__, sizeof(*arg));
 		ret = ENOMEM;
 		goto exit;
 	}
@@ -24293,6 +24298,10 @@ qwz_scan(struct qwz_softc *sc)
 		if (ret != ESHUTDOWN) {
 			printf("%s: failed to start hw scan: %d\n",
 			    sc->sc_dev.dv_xname, ret);
+#ifdef __APPLE__
+			/* The retry comes straight back through init_task: pace it. */
+			tsleep_nsec(&sc->scan.state, 0, "qwzscanbk", SEC_TO_NSEC(1));
+#endif
 		}
 #ifdef notyet
 		spin_lock_bh(&ar->data_lock);

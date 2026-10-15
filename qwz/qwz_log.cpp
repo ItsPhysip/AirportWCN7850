@@ -142,7 +142,11 @@ void
 qwz_log_publish(void)
 {
 	uint64_t head = __atomic_load_n(&qwz_log_head, __ATOMIC_RELAXED);
+	/* Publish at most the last 64 KB: a huge OSString property fails silently. */
+	const size_t QWZ_PUBLISH_MAX = 64 * 1024;
 	size_t avail = head < QWZ_LOG_SIZE ? (size_t)head : QWZ_LOG_SIZE, i, skip = 0;
+	if (avail > QWZ_PUBLISH_MAX)
+		avail = QWZ_PUBLISH_MAX;
 	uint64_t first = head - avail;
 	char *buf;
 	OSString *str;
@@ -155,7 +159,7 @@ qwz_log_publish(void)
 	for (i = 0; i < avail; i++)
 		buf[i] = qwz_log_ring[(first + i) % QWZ_LOG_SIZE];
 	buf[avail] = 0;
-	if (head > QWZ_LOG_SIZE) {	/* drop the partial first line after a wrap */
+	if (head > avail) {	/* drop the partial first line */
 		while (skip < avail && buf[skip] != '\n')
 			skip++;
 		if (skip < avail)
