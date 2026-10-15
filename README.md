@@ -4,7 +4,7 @@ A macOS driver for the **Qualcomm WCN7850** Wi-Fi chip (FastConnect 7800, sold a
 
 It is a port of OpenBSD's [`qwz(4)`](https://man.openbsd.org/qwz.4) driver, running on the 802.11 stack and network controller from [itlwm](https://github.com/OpenIntelWireless/itlwm). Like itlwm, it shows up in macOS as an Ethernet interface; you pick networks with [HeliPort](https://github.com/OpenIntelWireless/HeliPort).
 
-> **Status: experimental, not yet run on hardware.** It builds and links against macOS 26 (Tahoe, x86_64). The first boots on real hardware are bring-up tests. Read [Testing safely](#testing-safely) before installing.
+> **Status: working on one machine (2026-10-15).** On an MSI MAG X870 Tomahawk WiFi (Ryzen, macOS 26.7 Tahoe, OpenCore) the card boots its firmware, scans, joins a WPA2 network through HeliPort, gets a DHCP address and moves traffic (about 170 Mbit/s down, 60 up on first measurement). It is still a debug build with a staged bring-up; see [Bring-up and debugging](#bring-up-and-debugging). Read [Testing safely](#testing-safely) before installing.
 
 ## What to expect
 
@@ -53,6 +53,24 @@ DEBUG=1 ./build.sh "$PWD/build-debug"
 ```
 
 The first build clones [MacKernelSDK](https://github.com/acidanthera/MacKernelSDK) into `deps/`. Firmware comes from linux-firmware release `20260309`, the release OpenBSD's qwz firmware package uses; `firmware/SHA256SUMS` pins the files.
+
+## Bring-up and debugging
+
+The bring-up is staged. `qwz_stage=<n>` in boot-args stops it before stage *n* and leaves the driver loaded and idle; without `qwz_stage` the driver does nothing (a safe boot). `qwz_stage=1000` runs everything at boot. Stages: 1 kernel-thread test, 2 task queue, 3 gate, 4 attach, 5 config/BAR, 6 MSI, 7 D0 + first registers, 8 DMA, 9 attach done, 10 chip reset, 11 MHI, 12 firmware download, 13 MHI channels, 14 powered up, 15 QMI done, 16 CE/DP rings, 17 WMI ready, 18 core started, 19 pdev + mac, 20 init done. Stages 15–20 park (firmware left running, interrupts off) instead of cleaning up; reboot before another attempt.
+
+From the terminal, with the driver idle:
+
+| Command | What it does |
+|---|---|
+| `scripts/qwz-step.sh <n>` | `sysctl debug.qwz.stage=<n>` + `debug.qwz.start=1`: run the bring-up up to stage *n* and print the result |
+| `scripts/qwz-log.sh [lines]` | republish and print the in-memory log ring (`QwzMacLog` on the PCI device in the I/O Registry) |
+| `sysctl debug.qwz.debug=<mask>` | qwz trace mask (`QWZ_D_*` in `qwz/qwzvar.h`; 0x1 misc, 0x8 WMI, 0x40 MAC, 0x80 mgmt) |
+| `sysctl debug.qwz.logfile=1` | also append every line to `/private/var/log/qwzmac.log`, fully synced, so the last line survives a hard freeze |
+| `sudo dmesg \| grep qwz` | the same lines from the kernel buffer |
+
+`scripts/set-usb-stage.sh <n>` deploys `build-debug/QwzMac.kext` to the USB EFI, sets `qwz_stage=<n>` (and `qwz_debug` with `QWZ_DEBUG=<mask>`), unmounts and checks the filesystem. Messages from an OpenCore-injected kext never reach the unified log, which is why the ring and the file exist.
+
+Bugs found on the way, all macOS-specific and fixed: a `#define explicit_bzero bzero` in net80211 turned the compat `explicit_bzero` into a self-recursive `bzero` (every bring-up froze); `IOCommandGate::runAction` passes the gate's owner, not the caller (NULL softc after attach); xnu's `mbuf_pullup` always splits a cluster mbuf (WMI events unparseable); the bounce layer skipped the copy-out after a PREREAD (HTC never connected); the CE interrupt mask was never set with one MSI vector; the vdev must be created on the first interface-up when the firmware is left running.
 
 ## Testing safely
 
