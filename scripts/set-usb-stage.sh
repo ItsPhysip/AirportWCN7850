@@ -21,8 +21,18 @@ $PB -c "Set $KEY ${args}qwz_stage=$N" "$CFG"
 echo "kext $(shasum -a 256 build-debug/QwzMac.kext/Contents/MacOS/QwzMac | cut -c1-8) copied to $vol"
 echo "boot-args: $($PB -c "Print $KEY" "$CFG")"
 # Spotlight sometimes holds a freshly written volume for a few seconds.
+unmounted=0
 for i in 1 2 3 4 5; do
-  diskutil unmount "$vol" >/dev/null 2>&1 && { echo "unmounted $part"; exit 0; }
+  diskutil unmount "$vol" >/dev/null 2>&1 && { echo "unmounted $part"; unmounted=1; break; }
   sleep 3
 done
-echo "could not unmount $vol; eject it in Finder before rebooting"
+[ $unmounted = 1 ] || { echo "could not unmount $vol; eject it in Finder before rebooting"; exit 1; }
+# Hard power-offs can leave the FAT dirty; check it (read-only) after every deploy.
+raw=${part/\/dev\/disk//dev/rdisk}
+echo "--- filesystem check of $raw"
+if sudo fsck_msdos -n "$raw"; then
+  echo "USB EFI is clean"
+else
+  echo "USB EFI has errors: repair with  sudo fsck_msdos -y $raw"
+  exit 1
+fi
