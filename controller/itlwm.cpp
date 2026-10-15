@@ -483,6 +483,7 @@ bool itlwm::finishStart()
         XYLog("attach fail\n");
         return false;
     }
+    qwz_log("qwz: trace: HAL attach done; attaching the network interface\n");
     if (PE_parse_boot_argn("-novht", &boot_value, sizeof(boot_value)))
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOVHT;
     if (PE_parse_boot_argn("-noht40", &boot_value, sizeof(boot_value)))
@@ -493,6 +494,7 @@ bool itlwm::finishStart()
         fNetIf = NULL;
         return false;
     }
+    qwz_log("qwz: trace: network interface attached\n");
     fWatchdogWorkLoop = IOWorkLoop::workLoop();
     watchdogTimer = fWatchdogWorkLoop == NULL ? NULL :
         IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &itlwm::watchdogAction));
@@ -533,8 +535,10 @@ bool itlwm::finishStart()
     if (TAILQ_EMPTY(&fHalService->get80211Controller()->ic_ess)) {
         fHalService->get80211Controller()->ic_flags |= IEEE80211_F_AUTO_JOIN;
     }
+    qwz_log("qwz: trace: registering services\n");
     registerService();
     fNetIf->registerService();
+    qwz_log("qwz: trace: services registered\n");
     return true;
 }
 

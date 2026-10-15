@@ -93,6 +93,7 @@ ItlQwz::attachGated(OSObject *owner, void *arg0, void *, void *, void *)
 	if (that->sc == NULL)
 		return kIOReturnNoMemory;
 	err = qwz_pci_macos_attach(that->sc, pa);
+	QWZLOG("trace: qwz_pci_macos_attach returned %d", err);
 	if (err) {
 		QWZLOG("attach failed: %d", err);
 		qwz_pci_macos_detach(that->sc);
@@ -178,6 +179,7 @@ ItlQwz::attach(IOPCIDevice *device)
 	if (!qwz_stage_ok(3, "take the command gate (runAction)"))
 		return false;
 	ret = qwz_hal_gate->runAction(attachGated, &pa);
+	QWZLOG("trace: attachGated returned 0x%x (gate released)", ret);
 	if (ret != kIOReturnSuccess)
 		return false;
 
@@ -187,6 +189,7 @@ ItlQwz::attach(IOPCIDevice *device)
 	ifp->if_start = qwz_if_start_wrapper;
 	ifp->if_watchdog = qwz_if_watchdog_wrapper;
 
+	QWZLOG("trace: if_start/if_watchdog wrapped");
 	snprintf(fwVersion, sizeof(fwVersion), "%s", sc->qmi_target.fw_build_id);
 	QWZLOG("attached: MAC %s, firmware %s", ether_sprintf(sc->sc_ic.ic_myaddr), fwVersion);
 	return true;

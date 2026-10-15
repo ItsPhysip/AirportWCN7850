@@ -32,9 +32,12 @@ qwz_log_file_write(const char *line, int len)
 {
 	uio_t uio;
 
-	if (qwz_log_vp == NULL ||
-	    (current_thread() != qwz_log_file_thread &&
-	     current_thread() != qwz_log_file_thread2))
+	/*
+	 * Any thread may write while the file is open: qwz never logs from
+	 * primary interrupt context (the interrupt filter only claims), so
+	 * every caller is a thread that may block on I/O.
+	 */
+	if (qwz_log_vp == NULL)
 		return;
 	uio = uio_create(1, 0, UIO_SYSSPACE, UIO_WRITE);
 	if (uio == NULL)
@@ -93,9 +96,10 @@ qwz_vlog(const char *fmt, va_list ap)
 	int head, len, i;
 
 	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
-	head = snprintf(line, sizeof(line), "[%5llu.%03llu] ",
+	head = snprintf(line, sizeof(line), "[%5llu.%03llu %llx] ",
 	    (unsigned long long)(ns / 1000000000ULL),
-	    (unsigned long long)(ns / 1000000ULL % 1000));
+	    (unsigned long long)(ns / 1000000ULL % 1000),
+	    (unsigned long long)thread_tid(current_thread()));
 	if (head < 0 || (size_t)head >= sizeof(line))
 		head = 0;
 	len = vsnprintf(line + head, sizeof(line) - head, fmt, ap);
