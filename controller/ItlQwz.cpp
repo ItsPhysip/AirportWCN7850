@@ -19,6 +19,7 @@
 struct qwz_softc *qwz_pci_macos_alloc(void);
 int	qwz_pci_macos_attach(struct qwz_softc *, struct pci_attach_args *);
 void	qwz_pci_macos_detach(struct qwz_softc *);
+void	qwz_pci_macos_free(struct qwz_softc *);
 /* qwz.c */
 int	qwz_init(struct _ifnet *);
 
@@ -61,6 +62,17 @@ qwz_if_watchdog_wrapper(struct _ifnet *ifp)
 }
 
 bool
+ItlQwz::initWithController(IOEthernetController *controller, IOWorkLoop *workloop, IOCommandGate *commandGate)
+{
+	if (!super::initWithController(controller, workloop, commandGate))
+		return false;
+	qwz_compat_init();
+	if (sc == NULL)
+		sc = qwz_pci_macos_alloc();
+	return sc != NULL;
+}
+
+bool
 ItlQwz::qwz_match(IOPCIDevice *device)
 {
 	return device->configRead16(kIOPCIConfigVendorID) == PCI_VENDOR_QUALCOMM &&
@@ -84,8 +96,7 @@ ItlQwz::attachGated(OSObject *, void *arg0, void *arg1, void *, void *)
 	if (!qwz_stage_ok(3, "inside the qwz attach, holding the gate"))
 		return kIOReturnError;
 
-	that->sc = qwz_pci_macos_alloc();
-	if (that->sc == NULL)
+	if (that->sc == NULL && (that->sc = qwz_pci_macos_alloc()) == NULL)
 		return kIOReturnNoMemory;
 	err = qwz_pci_macos_attach(that->sc, pa);
 	if (err == QWZ_EPARKED) {
@@ -96,9 +107,11 @@ ItlQwz::attachGated(OSObject *, void *arg0, void *arg1, void *, void *)
 	if (err) {
 		QWZLOG("attach failed: %d", err);
 		qwz_pci_macos_detach(that->sc);
-		that->sc = NULL;
+		/* keep get80211Controller() valid: a fresh, empty softc */
+		that->sc = qwz_pci_macos_alloc();
 		return kIOReturnError;
 	}
+	that->attached = true;
 	return kIOReturnSuccess;
 }
 
@@ -171,9 +184,13 @@ ItlQwz::detachGated(OSObject *, void *arg0, void *, void *, void *)
 	ItlQwz *that = (ItlQwz *)arg0;	/* runAction's owner is the controller */
 
 	if (that->sc != NULL) {
-		qwz_pci_macos_detach(that->sc);
+		if (that->attached)
+			qwz_pci_macos_detach(that->sc);
+		else
+			qwz_pci_macos_free(that->sc);	/* never attached */
 		that->sc = NULL;
 	}
+	that->attached = false;
 	return kIOReturnSuccess;
 }
 
@@ -212,7 +229,7 @@ ItlQwz::enableGated(OSObject *, void *arg0, void *, void *, void *)
 IOReturn
 ItlQwz::enable(IONetworkInterface *netif)
 {
-	return sc ? qwz_hal_gate->runAction(enableGated, this) : kIOReturnNotReady;
+	return attached ? qwz_hal_gate->runAction(enableGated, this) : kIOReturnNotReady;
 }
 
 IOReturn
@@ -232,7 +249,7 @@ ItlQwz::disableGated(OSObject *, void *arg0, void *, void *, void *)
 IOReturn
 ItlQwz::disable(IONetworkInterface *netif)
 {
-	return sc ? qwz_hal_gate->runAction(disableGated, this) : kIOReturnNotReady;
+	return attached ? qwz_hal_gate->runAction(disableGated, this) : kIOReturnNotReady;
 }
 
 struct ieee80211com *

@@ -4327,6 +4327,13 @@ qwz_pci_macos_alloc(void)
 	return &psc->sc_sc;
 }
 
+/* Frees a softc from qwz_pci_macos_alloc() that was never attached. */
+void
+qwz_pci_macos_free(struct qwz_softc *sc)
+{
+	free(sc, M_DEVBUF, sizeof(struct qwz_pci_softc));
+}
+
 /* Returns 0 once the device is attached and the firmware reported a MAC address. */
 int
 qwz_pci_macos_attach(struct qwz_softc *sc, struct pci_attach_args *pa)

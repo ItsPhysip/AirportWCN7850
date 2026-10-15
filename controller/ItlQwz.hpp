@@ -44,6 +44,7 @@ public:
 
 	/* ItlDriverController */
 	void clearScanningFlags() override;
+	bool initWithController(IOEthernetController *controller, IOWorkLoop *workloop, IOCommandGate *commandGate) override;
 	IOReturn setMulticastList(IOEthernetAddress *addr, int count) override;
 #ifdef AIRPORT_WCL
 	IOReturn setScanHomeAwayTime(uint32_t ms) override;
@@ -55,7 +56,13 @@ private:
 	static IOReturn enableGated(OSObject *owner, void *, void *, void *, void *);
 	static IOReturn disableGated(OSObject *owner, void *, void *, void *, void *);
 
+	/*
+	 * The softc exists from initWithController() on, so get80211Controller()
+	 * is always valid (the native Wi-Fi layer sets ic_event_handler before
+	 * attach); attached says whether the hardware is behind it.
+	 */
 	struct qwz_softc *sc;
+	bool attached;
 	char fwVersion[64];
 };
 
