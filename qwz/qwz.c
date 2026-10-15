@@ -283,6 +283,9 @@ qwz_init(struct ifnet *ifp)
 	 * current address; otherwise the AP talks to an address the firmware
 	 * never listens on (association works, DHCP never answers).
 	 */
+	/* The upper layers set the BSD address; make it the 802.11 one too. */
+	if (sc->attached)
+		IEEE80211_ADDR_COPY(ic->ic_myaddr, ((struct arpcom *)ifp)->ac_enaddr);
 	if (sc->fw_initialized && (ifp->if_flags & IFF_UP) &&
 	    sc->num_created_vdevs > 0 &&
 	    !IEEE80211_ADDR_EQ(sc->sc_vif.vdev_addr, ic->ic_myaddr)) {
