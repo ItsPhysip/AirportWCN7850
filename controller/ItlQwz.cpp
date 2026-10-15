@@ -184,6 +184,7 @@ ItlQwz::detachGated(OSObject *, void *arg0, void *, void *, void *)
 {
 	ItlQwz *that = (ItlQwz *)arg0;	/* runAction's owner is the controller */
 
+	QWZLOG("detach: attached %d shutdown %d", that->attached, that->shutdown);
 	if (that->sc != NULL) {
 		if (that->attached && that->shutdown)
 			qwz_pci_macos_quiesced_detach(that->sc);	/* chip is off already */
@@ -209,10 +210,12 @@ ItlQwz::shutdownGated(OSObject *, void *arg0, void *, void *, void *)
 	if (!that->attached || that->shutdown)
 		return kIOReturnSuccess;
 	ifp = &that->sc->sc_ic.ic_if;
+	QWZLOG("shutdown: stopping the interface");
 	rw_enter_write(&that->sc->ioctl_rwl);
 	ifp->if_flags &= ~IFF_UP;
 	if (ifp->if_flags & IFF_RUNNING)
 		qwz_stop(ifp);
+	QWZLOG("shutdown: interface stopped; firmware stop + power-down");
 	if (that->sc->fw_initialized)
 		qwz_core_deinit(that->sc);	/* firmware stop + chip power-down */
 	rw_exit(&that->sc->ioctl_rwl);

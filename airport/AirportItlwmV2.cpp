@@ -529,33 +529,44 @@ void AirportItlwm::systemWillShutdown(IOOptionBits specifier)
 {
     if ((specifier == kIOMessageSystemWillPowerOff ||
          specifier == kIOMessageSystemWillRestart) && fHalService != NULL) {
-        qwz_log("qwz: system shutdown: turning the radio off\n");
+        qwz_log_file_begin();	/* the root fs is still writable here */
+        qwz_log("qwz: ==== system shutdown (0x%x): turning the radio off ====\n", (unsigned)specifier);
         fHalService->shutdownHardware();
+        qwz_log("qwz: shutdown: radio off; calling super\n");
     }
     super::systemWillShutdown(specifier);
+    qwz_log("qwz: shutdown: super::systemWillShutdown returned\n");
 }
 
 void AirportItlwm::stop(IOService *provider)
 {
-    XYLog("%s\n", __PRETTY_FUNCTION__);
+    qwz_log("qwz: stop: enter\n");
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     if (roleTimer) {
         roleTimer->cancelTimeout();
         _fWorkloop->removeEventSource(roleTimer);
         OSSafeReleaseNULL(roleTimer);
     }
+    qwz_log("qwz: stop: role timer gone; stopWCL\n");
 #ifdef AIRPORT_WCL
     if (fNetIf)
         static_cast<AirportItlwmSkywalkInterface *>(fNetIf)->stopWCL();
 #endif
+    qwz_log("qwz: stop: super::stop\n");
     super::stop(provider);
+    qwz_log("qwz: stop: disableAdapter\n");
     disableAdapter(bsdInterface);
     setLinkStatus(kIONetworkLinkValid);
+    qwz_log("qwz: stop: HAL detach\n");
     fHalService->detach(pciNub);
+    qwz_log("qwz: stop: ether_ifdetach\n");
     ether_ifdetach(ifp);
+    qwz_log("qwz: stop: detachInterface\n");
     detachInterface(fNetIf, true);
     OSSafeReleaseNULL(fNetIf);
+    qwz_log("qwz: stop: releaseAll\n");
     releaseAll();
+    qwz_log("qwz: stop: done\n");
 }
 
 void AirportItlwm::free()
