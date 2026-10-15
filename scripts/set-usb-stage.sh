@@ -1,5 +1,5 @@
 #!/bin/bash
-# set-usb-stage.sh <n>: mount the USB EFI, copy build-debug/QwzMac.kext there,
+# [QWZ_DEBUG=<mask>] set-usb-stage.sh <n>: mount the USB EFI, copy build-debug/QwzMac.kext there,
 # set qwz_stage=<n> in the config's boot-args (the stage limit; 0 = driver idle,
 # 1000 = full bring-up), then unmount. Needs sudo for the mount.
 set -euo pipefail
@@ -16,7 +16,10 @@ CFG=$vol/EFI/OC/config.plist
 [ -f "$CFG" ] || { echo "STOP: $CFG not found"; exit 1; }
 rm -rf "$vol/EFI/OC/Kexts/QwzMac.kext"
 cp -R build-debug/QwzMac.kext "$vol/EFI/OC/Kexts/"
-args=$($PB -c "Print $KEY" "$CFG" | tr ' ' '\n' | grep -v '^qwz_stage=' | tr '\n' ' ')
+# QWZ_DEBUG=<mask> (env) also sets qwz_debug=<mask>; 0x5 dumps every QMI byte
+# as its own synced log line, which slows the handshake enough to time out.
+args=$($PB -c "Print $KEY" "$CFG" | tr ' ' '\n' | grep -v '^qwz_stage=' | { [ -n "${QWZ_DEBUG:-}" ] && grep -v '^qwz_debug=' || cat; } | tr '\n' ' ')
+[ -n "${QWZ_DEBUG:-}" ] && args="${args}qwz_debug=$QWZ_DEBUG "
 $PB -c "Set $KEY ${args}qwz_stage=$N" "$CFG"
 echo "kext $(shasum -a 256 build-debug/QwzMac.kext/Contents/MacOS/QwzMac | cut -c1-8) copied to $vol"
 echo "boot-args: $($PB -c "Print $KEY" "$CFG")"

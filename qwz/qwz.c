@@ -207,6 +207,36 @@ qwz_free_peers(struct qwz_softc *sc)
 	KASSERT(sc->num_peers == 0);
 }
 
+#ifdef __APPLE__
+/*
+ * Checkpoint for stages 15 and up (see qwz_compat.h). Returns 1 to go on.
+ * Returns 0 after parking the bring-up: the chip-side interrupts are
+ * disabled, the firmware is left running, and the caller must return
+ * QWZ_EPARKED without any cleanup. The whole attach then unwinds the same
+ * way, so the machine can sit idle in exactly this state.
+ */
+void	qwz_pcic_ce_irqs_disable(struct qwz_softc *);	/* if_qwz_pci.c */
+
+int
+qwz_stage_park(struct qwz_softc *sc, int n, const char *what)
+{
+	if (qwz_stage_ok(n, what))
+		return 1;
+	/*
+	 * ops.irq_disable only clears the ext-irq flag with a single MSI
+	 * vector; the CE interrupts are enabled by ops.start (stage 17) and
+	 * are switched off at the chip here, so nothing arrives while parked.
+	 */
+	sc->ops.irq_disable(sc);
+	if (test_bit(ATH12K_FLAG_DEVICE_INIT_DONE, sc->sc_flags))
+		qwz_pcic_ce_irqs_disable(sc);
+	qwz_stage_set_parked();
+	QWZ_TRACE("parked at stage %d: firmware running, chip interrupts off; "
+	    "reboot before the next attempt", n);
+	return 0;
+}
+#endif
+
 int
 qwz_init(struct ifnet *ifp)
 {
@@ -305,6 +335,12 @@ qwz_init(struct ifnet *ifp)
 	}
 
 	error = qwz_qmi_event_server_arrive(sc);
+#ifdef __APPLE__
+	if (error == QWZ_EPARKED) {
+		splx(s);
+		return error;	/* parked: no cleanup (qwz_stage_park) */
+	}
+#endif
 	if (error)
 		goto fail;
 	core_ready = 1;
@@ -328,6 +364,12 @@ qwz_init(struct ifnet *ifp)
 
 		ieee80211_media_init(ifp);	/* macOS: itl80211 fills in the callbacks */
 	}
+#ifdef __APPLE__
+	if (!qwz_stage_park(sc, 20, "qwz_init done (channels, MAC address, media); next is the return to attach")) {
+		splx(s);
+		return QWZ_EPARKED;
+	}
+#endif
 
 	if (ifp->if_flags & IFF_UP) {
 		error = qwz_mac_start(sc);
@@ -18761,6 +18803,10 @@ qwz_core_start(struct qwz_softc *sc)
 		    sc->sc_dev.dv_xname, ret);
 		goto err_hif_stop;
 	}
+#ifdef __APPLE__
+	if (!qwz_stage_park(sc, 17, "WMI service ready; next is REO setup, WMI init and hw mode"))
+		return QWZ_EPARKED;
+#endif
 #if 0
 	ret = ath12k_mac_allocate(ab);
 	if (ret) {
@@ -18822,6 +18868,10 @@ qwz_core_start(struct qwz_softc *sc)
 		}
 		goto err_reo_cleanup;
 	}
+#ifdef __APPLE__
+	if (!qwz_stage_park(sc, 18, "core started (WMI init, hw mode, HTT version); next is DP pdev alloc and mac register"))
+		return QWZ_EPARKED;
+#endif
 
 	return 0;
 err_reo_cleanup:
@@ -18970,6 +19020,10 @@ qwz_core_qmi_firmware_ready(struct qwz_softc *sc)
 		    sc->sc_dev.dv_xname, ret);
 		return ret;
 	}
+#ifdef __APPLE__
+	if (!qwz_stage_park(sc, 15, "QMI handshake done, firmware in WLAN mode; next is CE pipes and DP alloc"))
+		return QWZ_EPARKED;
+#endif
 
 	ret = qwz_ce_init_pipes(sc);
 	if (ret) {
@@ -18984,6 +19038,10 @@ qwz_core_qmi_firmware_ready(struct qwz_softc *sc)
 		    sc->sc_dev.dv_xname, ret);
 		goto err_firmware_stop;
 	}
+#ifdef __APPLE__
+	if (!qwz_stage_park(sc, 16, "CE pipes and DP rings allocated; next is core start (WMI, HTC, HTT)"))
+		return QWZ_EPARKED;
+#endif
 
 	switch (sc->crypto_mode) {
 	case ATH12K_CRYPT_MODE_SW:
@@ -19007,6 +19065,10 @@ qwz_core_qmi_firmware_ready(struct qwz_softc *sc)
 	mutex_lock(&ab->core_lock);
 #endif
 	ret = qwz_core_start(sc);
+#ifdef __APPLE__
+	if (ret == QWZ_EPARKED)
+		return ret;	/* parked: no cleanup (qwz_stage_park) */
+#endif
 	if (ret) {
 		printf("%s: failed to start core: %d\n",
 		    sc->sc_dev.dv_xname, ret);
@@ -19025,6 +19087,10 @@ qwz_core_qmi_firmware_ready(struct qwz_softc *sc)
 		    sc->sc_dev.dv_xname, ret);
 		goto err_core_stop;
 	}
+#ifdef __APPLE__
+	if (!qwz_stage_park(sc, 19, "DP pdev and mac registered; next is channel init, MAC address and media init"))
+		return QWZ_EPARKED;
+#endif
 
 #if 0
 	mutex_unlock(&ab->core_lock);

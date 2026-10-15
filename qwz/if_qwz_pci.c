@@ -4342,6 +4342,8 @@ qwz_pci_macos_attach(struct qwz_softc *sc, struct pci_attach_args *pa)
 	/* config_mountroot() deferred qwz_attach(): firmware is built in. */
 	qwz_compat_run_mountroot();
 	QWZ_TRACE("%s: mountroot hook returned", __func__);
+	if (qwz_stage_parked())
+		return QWZ_EPARKED;	/* stage >= 15 refused: leave everything as is */
 	if (IEEE80211_ADDR_EQ(ic->ic_myaddr, etheranyaddr)) {
 		printf("%s: firmware did not report a MAC address\n",
 		    sc->sc_dev.dv_xname);

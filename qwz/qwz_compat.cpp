@@ -1132,6 +1132,22 @@ qwz_stage_reset(void)
 	qwz_stage_limited = false;
 }
 
+/* Set once a stage >= 15 was refused and the bring-up was parked (qwz.c). */
+static bool qwz_stage_is_parked;
+
+int
+qwz_stage_parked(void)
+{
+	return qwz_stage_is_parked;
+}
+
+void
+qwz_stage_set_parked(void)
+{
+	qwz_stage_is_parked = true;
+	qwz_stage_limited = true;
+}
+
 int
 qwz_stage_ok(int n, const char *what)
 {

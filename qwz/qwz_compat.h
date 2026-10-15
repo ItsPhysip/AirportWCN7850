@@ -468,6 +468,19 @@ int	qwz_stage_ok(int, const char *);
 void	qwz_hexdump(const char *, const void *, size_t, size_t);
 int	qwz_stage_hit_limit(void);	/* a checkpoint was refused by the limit */
 void	qwz_stage_reset(void);		/* clear that flag before a new attempt */
+/*
+ * Stages 15 and up sit inside the firmware init, after the point where the
+ * power-down path itself freezes the machine (runs 8-12 of the log). When
+ * one of them is refused, the bring-up is parked instead of cleaned up:
+ * the chip stays powered, the firmware keeps running, the chip-side
+ * interrupts are disabled, and every caller returns QWZ_EPARKED up to the
+ * attach without freeing or touching anything. The driver then sits idle;
+ * a reboot is needed before the next attempt.
+ */
+#define QWZ_EPARKED	0x5a5a
+int	qwz_stage_park(struct qwz_softc *, int, const char *);	/* qwz.c */
+int	qwz_stage_parked(void);
+void	qwz_stage_set_parked(void);
 
 /* Debug: attach a copy of `buf` to the controller as an IORegistry property. */
 int	qwz_compat_publish_blob(const char *, const void *, size_t);

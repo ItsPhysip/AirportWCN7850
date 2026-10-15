@@ -94,6 +94,11 @@ ItlQwz::attachGated(OSObject *owner, void *arg0, void *, void *, void *)
 		return kIOReturnNoMemory;
 	err = qwz_pci_macos_attach(that->sc, pa);
 	QWZLOG("trace: qwz_pci_macos_attach returned %d", err);
+	if (err == QWZ_EPARKED) {
+		/* Parked at a stage >= 15: keep sc and the running firmware. */
+		QWZLOG("parked: the driver stays idle with the firmware running");
+		return kIOReturnError;
+	}
 	if (err) {
 		QWZLOG("attach failed: %d", err);
 		qwz_pci_macos_detach(that->sc);
@@ -120,6 +125,10 @@ ItlQwz::attach(IOPCIDevice *device)
 	PE_parse_boot_argn("qwz_debug", &qwz_debug, sizeof(qwz_debug));
 	QWZLOG("debug build, qwz_debug=0x%x", qwz_debug);
 #endif
+	if (qwz_stage_parked()) {
+		QWZLOG("parked by an earlier attempt; reboot before starting again");
+		return false;
+	}
 	QWZLOG("trace: qwz_compat_init");
 	qwz_compat_init();
 	qwz_stage_reset();	/* each attempt starts with a clean limit flag */
