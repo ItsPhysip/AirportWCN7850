@@ -20,6 +20,7 @@ struct qwz_softc *qwz_pci_macos_alloc(void);
 int	qwz_pci_macos_attach(struct qwz_softc *, struct pci_attach_args *);
 void	qwz_pci_macos_detach(struct qwz_softc *);
 void	qwz_pci_macos_free(struct qwz_softc *);
+void	qwz_pci_macos_quiesced_detach(struct qwz_softc *);
 /* qwz.c */
 int	qwz_init(struct _ifnet *);
 
@@ -184,7 +185,9 @@ ItlQwz::detachGated(OSObject *, void *arg0, void *, void *, void *)
 	ItlQwz *that = (ItlQwz *)arg0;	/* runAction's owner is the controller */
 
 	if (that->sc != NULL) {
-		if (that->attached)
+		if (that->attached && that->shutdown)
+			qwz_pci_macos_quiesced_detach(that->sc);	/* chip is off already */
+		else if (that->attached)
 			qwz_pci_macos_detach(that->sc);
 		else
 			qwz_pci_macos_free(that->sc);	/* never attached */
@@ -192,6 +195,38 @@ ItlQwz::detachGated(OSObject *, void *arg0, void *, void *, void *)
 	}
 	that->attached = false;
 	return kIOReturnSuccess;
+}
+
+/* qwz.c */
+void	qwz_core_deinit(struct qwz_softc *);
+
+IOReturn
+ItlQwz::shutdownGated(OSObject *, void *arg0, void *, void *, void *)
+{
+	ItlQwz *that = (ItlQwz *)arg0;
+	struct _ifnet *ifp;
+
+	if (!that->attached || that->shutdown)
+		return kIOReturnSuccess;
+	ifp = &that->sc->sc_ic.ic_if;
+	rw_enter_write(&that->sc->ioctl_rwl);
+	ifp->if_flags &= ~IFF_UP;
+	if (ifp->if_flags & IFF_RUNNING)
+		qwz_stop(ifp);
+	if (that->sc->fw_initialized)
+		qwz_core_deinit(that->sc);	/* firmware stop + chip power-down */
+	rw_exit(&that->sc->ioctl_rwl);
+	that->shutdown = true;
+	QWZLOG("chip powered down for system shutdown");
+	return kIOReturnSuccess;
+}
+
+/* Called from the controller's systemWillShutdown(), before IOKit stops us. */
+void
+ItlQwz::shutdownHardware()
+{
+	if (qwz_hal_gate != NULL)
+		qwz_hal_gate->runAction(shutdownGated, this);
 }
 
 void

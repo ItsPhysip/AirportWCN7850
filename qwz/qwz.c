@@ -316,6 +316,17 @@ qwz_init(struct ifnet *ifp)
 			 */
 			if (sc->num_created_vdevs == 0) {
 				error = qwz_mac_start(sc);
+				if (error == EAGAIN || error == ETIMEDOUT) {
+					/*
+					 * Seen after the firmware sat idle for a while
+					 * since attach (tx credits timeout): restart it
+					 * and take the full init below.
+					 */
+					printf("%s: mac start failed (%d): restarting "
+					    "the firmware\n", sc->sc_dev.dv_xname, error);
+					qwz_core_deinit(sc);
+					goto full_init;
+				}
 				if (error) {
 					printf("%s: could not start mac: %d\n",
 					    sc->sc_dev.dv_xname, error);
@@ -334,6 +345,9 @@ qwz_init(struct ifnet *ifp)
 		return 0;
 	}
 
+#ifdef __APPLE__
+full_init:
+#endif
 	sc->fw_mode = ATH12K_FIRMWARE_MODE_NORMAL;
 	/*
 	 * There are several known hardware/software crypto issues

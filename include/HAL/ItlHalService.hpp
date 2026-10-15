@@ -41,6 +41,13 @@ public:
     virtual IOReturn enable(IONetworkInterface *interface) = 0;
     
     virtual IOReturn disable(IONetworkInterface *interface) = 0;
+
+    /*
+     * System power-off/restart: stop the interface and quiesce the chip
+     * while the system is still fully alive; detach() then skips the
+     * hardware teardown. Default: nothing.
+     */
+    virtual void shutdownHardware() {}
     
     virtual struct ieee80211com *get80211Controller() = 0;
     

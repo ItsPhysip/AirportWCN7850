@@ -643,6 +643,16 @@ IOReturn itlwm::selectMedium(const IONetworkMedium *medium) {
     return kIOReturnSuccess;
 }
 
+void itlwm::systemWillShutdown(IOOptionBits specifier)
+{
+    if ((specifier == kIOMessageSystemWillPowerOff ||
+         specifier == kIOMessageSystemWillRestart) && fHalService != NULL) {
+        qwz_log("qwz: system shutdown: turning the radio off\n");
+        fHalService->shutdownHardware();
+    }
+    super::systemWillShutdown(specifier);
+}
+
 void itlwm::stop(IOService *provider)
 {
     XYLog("%s\n", __FUNCTION__);

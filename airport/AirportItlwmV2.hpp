@@ -85,6 +85,7 @@ public:
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
+    virtual void systemWillShutdown(IOOptionBits specifier) override;
     virtual IOReturn enable(IO80211SkywalkInterface *netif) AIRPORT_LEGACY_OVERRIDE;
     virtual IOReturn disable(IO80211SkywalkInterface *netif) AIRPORT_LEGACY_OVERRIDE;
     virtual IOReturn setHardwareAddress(const void *addr, UInt32 addrBytes) override;

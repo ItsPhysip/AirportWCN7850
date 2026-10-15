@@ -520,6 +520,21 @@ bool AirportItlwm::start(IOService *provider)
     return true;
 }
 
+/*
+ * Without this the firmware keeps running (and the driver's stop() tears it
+ * down late, with parts of the system gone) through power-off, which froze
+ * the shutdown. Quiet the chip while everything is still alive.
+ */
+void AirportItlwm::systemWillShutdown(IOOptionBits specifier)
+{
+    if ((specifier == kIOMessageSystemWillPowerOff ||
+         specifier == kIOMessageSystemWillRestart) && fHalService != NULL) {
+        qwz_log("qwz: system shutdown: turning the radio off\n");
+        fHalService->shutdownHardware();
+    }
+    super::systemWillShutdown(specifier);
+}
+
 void AirportItlwm::stop(IOService *provider)
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);

@@ -45,6 +45,8 @@ public:
 	/* ItlDriverController */
 	void clearScanningFlags() override;
 	bool initWithController(IOEthernetController *controller, IOWorkLoop *workloop, IOCommandGate *commandGate) override;
+	void shutdownHardware() override;
+	static IOReturn shutdownGated(OSObject *, void *, void *, void *, void *);
 	IOReturn setMulticastList(IOEthernetAddress *addr, int count) override;
 #ifdef AIRPORT_WCL
 	IOReturn setScanHomeAwayTime(uint32_t ms) override;
@@ -63,6 +65,7 @@ private:
 	 */
 	struct qwz_softc *sc;
 	bool attached;
+	bool shutdown;		/* shutdownHardware() ran: the chip is already off */
 	char fwVersion[64];
 };
 

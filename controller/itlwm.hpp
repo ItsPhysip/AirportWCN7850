@@ -47,6 +47,7 @@ public:
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
+    virtual void systemWillShutdown(IOOptionBits specifier) override;
     virtual IOReturn getHardwareAddress(IOEthernetAddress* addrP) override;
     virtual IOReturn setHardwareAddress(const IOEthernetAddress * addrP) override;
     virtual IOReturn enable(IONetworkInterface *netif) override;

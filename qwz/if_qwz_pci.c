@@ -4327,6 +4327,19 @@ qwz_pci_macos_alloc(void)
 	return &psc->sc_sc;
 }
 
+/*
+ * Detach after shutdownHardware() powered the chip down: release the
+ * interrupt handlers and the softc without touching the hardware again.
+ */
+void
+qwz_pci_macos_quiesced_detach(struct qwz_softc *sc)
+{
+	struct qwz_pci_softc *psc = (struct qwz_pci_softc *)sc;
+
+	qwz_pci_disestablish_all(psc);
+	free(psc, M_DEVBUF, sizeof(*psc));
+}
+
 /* Frees a softc from qwz_pci_macos_alloc() that was never attached. */
 void
 qwz_pci_macos_free(struct qwz_softc *sc)
