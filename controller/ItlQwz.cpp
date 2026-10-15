@@ -150,12 +150,21 @@ ItlQwz::attach(IOPCIDevice *device)
 		taskq_init();
 		taskq_ready = true;
 	}
-	QWZLOG("trace: taskq_init returned; filling attach args (%zu bytes)", sizeof(pa));
+	QWZLOG("trace: taskq_init returned; pausing 300 ms to see if a delayed effect hits");
+	IOSleep(300);
+	QWZLOG("trace: pause over; filling attach args (%zu bytes at %p)", sizeof(pa), &pa);
 
 	bzero(&pa, sizeof(pa));
+	QWZLOG("trace: bzero done");
 	pa.pa_tag = device;
-	pa.pa_id = device->configRead16(kIOPCIConfigVendorID) |
-	    ((pcireg_t)device->configRead16(kIOPCIConfigDeviceID) << 16);
+	QWZLOG("trace: pa_tag set (%p); reading vendor id", device);
+	{
+		UInt16 vid = device->configRead16(kIOPCIConfigVendorID);
+		QWZLOG("trace: vendor 0x%04x; reading device id", vid);
+		UInt16 did = device->configRead16(kIOPCIConfigDeviceID);
+		QWZLOG("trace: device 0x%04x", did);
+		pa.pa_id = vid | ((pcireg_t)did << 16);
+	}
 	QWZLOG("trace: config reads done, id 0x%08x", pa.pa_id);
 	pa.pa_workloop = getMainWorkLoop();
 	pa.pa_owner = this;
