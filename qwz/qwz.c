@@ -170,6 +170,22 @@ qwz_node_alloc(struct ieee80211com *ic)
 }
 
 #ifdef __APPLE__
+/*
+ * Background scan while associated (ic_bgscan_start). macOS asks for one
+ * whenever the Wi-Fi menu is open; OpenBSD's qwz has no entry point for it.
+ * The firmware scans off-channel on its own while the vdev stays up, so the
+ * normal scan command does the job; ieee80211_end_scan() finishes it.
+ */
+int
+qwz_bgscan(struct ieee80211com *ic)
+{
+	struct qwz_softc *sc = (struct qwz_softc *)ic->ic_softc;
+
+	if (sc->scan.state != ATH12K_SCAN_IDLE)
+		return EBUSY;
+	return qwz_scan(sc);
+}
+
 void
 qwz_node_free(struct ieee80211com *ic, struct ieee80211_node *ni)
 {

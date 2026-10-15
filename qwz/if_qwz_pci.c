@@ -1032,6 +1032,9 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	ic->ic_ampdu_rx_stop = qwz_ampdu_rx_stop;
 	ic->ic_ampdu_tx_start = qwz_ampdu_tx_start;
 	ic->ic_ampdu_tx_stop = NULL;
+#ifdef __APPLE__
+	ic->ic_bgscan_start = qwz_bgscan;	/* scans while associated (Wi-Fi menu) */
+#endif
 	/*
 	 * We cannot read the MAC address without loading the
 	 * firmware from disk. Postpone until mountroot is done.
