@@ -422,6 +422,9 @@ qwz_sysctl_start(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_re
         return err;
     if (v != 1 || qwz_sysctl_owner == NULL)
         return EINVAL;
+    qwz_log_file_begin();
+    qwz_log("qwz: sysctl debug.qwz.start=1 received\n");
+    qwz_log_file_end();
     return qwz_sysctl_owner->requestBringUp() ? 0 : EBUSY;
 }
 

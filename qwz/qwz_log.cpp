@@ -40,6 +40,8 @@ qwz_log_file_write(const char *line, int len)
 	VNOP_WRITE(qwz_log_vp, uio, IO_APPEND | IO_SYNC, qwz_log_ctx);
 	uio_free(uio);
 	VNOP_FSYNC(qwz_log_vp, MNT_WAIT, qwz_log_ctx);
+	/* As fcntl(F_FULLFSYNC): make the drive flush its own write cache too. */
+	VNOP_IOCTL(qwz_log_vp, F_FULLFSYNC, (caddr_t)NULL, 0, qwz_log_ctx);
 }
 
 void
