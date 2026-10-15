@@ -530,6 +530,23 @@ bool itlwm::finishStart()
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOVHT;
     if (PE_parse_boot_argn("-noht40", &boot_value, sizeof(boot_value)))
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOHT40;
+    /*
+     * QwzMac: the watchdog must exist before the interface does. Attaching
+     * the interface registers it, and the network stack may call enable()
+     * at once, on another thread; enable() uses watchdogTimer. The bring-up
+     * froze (NULL dereference) when enable() won that race.
+     */
+    fWatchdogWorkLoop = IOWorkLoop::workLoop();
+    watchdogTimer = fWatchdogWorkLoop == NULL ? NULL :
+        IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &itlwm::watchdogAction));
+    if (watchdogTimer == NULL) {
+        XYLog("init watchdog fail\n");
+        fHalService->detach(pciNub);
+        return false;
+    }
+    fWatchdogWorkLoop->addEventSource(watchdogTimer);
+    setLinkStatus(kIONetworkLinkValid);
+    qwz_log("qwz: trace: watchdog ready; attaching the network interface\n");
     if (!attachInterface((IONetworkInterface **)&fNetIf, true)) {
         XYLog("attach to interface fail\n");
         fHalService->detach(pciNub);
@@ -537,18 +554,6 @@ bool itlwm::finishStart()
         return false;
     }
     qwz_log("qwz: trace: network interface attached\n");
-    fWatchdogWorkLoop = IOWorkLoop::workLoop();
-    watchdogTimer = fWatchdogWorkLoop == NULL ? NULL :
-        IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &itlwm::watchdogAction));
-    if (watchdogTimer == NULL) {
-        XYLog("init watchdog fail\n");
-        detachInterface(fNetIf, true);
-        OSSafeReleaseNULL(fNetIf);
-        fHalService->detach(pciNub);
-        return false;
-    }
-    fWatchdogWorkLoop->addEventSource(watchdogTimer);
-    setLinkStatus(kIONetworkLinkValid);
     OSObject *wifiEntryObject = NULL;
     OSDictionary *wifiEntry = NULL;
     OSString *entryKey = NULL;
@@ -707,21 +712,28 @@ void itlwm::free()
 
 IOReturn itlwm::enable(IONetworkInterface *netif)
 {
-    XYLog("%s\n", __FUNCTION__);
+    IOReturn ret;
+
+    qwz_log("qwz: trace: enable()\n");
     super::enable(netif);
     _fCommandGate->enable();
-    fHalService->enable(netif);
-    watchdogTimer->setTimeoutMS(kWatchDogTimerPeriod);
-    watchdogTimer->enable();
+    ret = fHalService->enable(netif);
+    qwz_log("qwz: trace: HAL enable returned 0x%x\n", ret);
+    if (watchdogTimer != NULL) {
+        watchdogTimer->setTimeoutMS(kWatchDogTimerPeriod);
+        watchdogTimer->enable();
+    }
     return kIOReturnSuccess;
 }
 
 IOReturn itlwm::disable(IONetworkInterface *netif)
 {
-    XYLog("%s\n", __FUNCTION__);
+    qwz_log("qwz: trace: disable()\n");
     super::disable(netif);
-    watchdogTimer->cancelTimeout();
-    watchdogTimer->disable();
+    if (watchdogTimer != NULL) {
+        watchdogTimer->cancelTimeout();
+        watchdogTimer->disable();
+    }
     fHalService->disable(netif);
     setLinkStatus(kIONetworkLinkValid);
     return kIOReturnSuccess;
