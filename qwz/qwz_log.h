@@ -29,4 +29,15 @@ void	qwz_stage_reset(void);
 /* Republishes the log ring as QwzMacLog. */
 void	qwz_log_publish(void);
 
+/*
+ * File sink for bring-ups started from the terminal: between begin and end,
+ * lines logged by the calling thread are also appended to QWZ_LOG_FILE with
+ * a synchronous write each, so the last line before a hard freeze survives.
+ * Only the thread that called begin writes (never interrupt or workloop
+ * context). Lines from other threads stay in the ring only.
+ */
+#define QWZ_LOG_FILE	"/private/var/log/qwzmac.log"
+void	qwz_log_file_begin(void);
+void	qwz_log_file_end(void);
+
 #endif /* QWZ_LOG_H */

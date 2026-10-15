@@ -10,12 +10,68 @@
 #include <IOKit/IOService.h>
 #include <libkern/c++/OSString.h>
 #include <kern/clock.h>
+#include <kern/thread.h>
+#include <sys/vnode.h>
+#include <sys/uio.h>
+#include <sys/fcntl.h>
+#include <sys/mount.h>
 
 #define QWZ_LOG_SIZE	(128 * 1024)
 
 static char qwz_log_ring[QWZ_LOG_SIZE];
 static volatile uint64_t qwz_log_head;	/* bytes ever written */
 static IOService *qwz_log_target;
+
+static vnode_t qwz_log_vp;
+static vfs_context_t qwz_log_ctx;
+static thread_t qwz_log_file_thread;
+
+static void
+qwz_log_file_write(const char *line, int len)
+{
+	uio_t uio;
+
+	if (qwz_log_vp == NULL || current_thread() != qwz_log_file_thread)
+		return;
+	uio = uio_create(1, 0, UIO_SYSSPACE, UIO_WRITE);
+	if (uio == NULL)
+		return;
+	uio_addiov(uio, CAST_USER_ADDR_T(line), len);
+	VNOP_WRITE(qwz_log_vp, uio, IO_APPEND | IO_SYNC, qwz_log_ctx);
+	uio_free(uio);
+	VNOP_FSYNC(qwz_log_vp, MNT_WAIT, qwz_log_ctx);
+}
+
+void
+qwz_log_file_begin(void)
+{
+	if (qwz_log_vp != NULL)
+		return;
+	qwz_log_ctx = vfs_context_create(NULL);
+	if (qwz_log_ctx == NULL)
+		return;
+	if (vnode_open(QWZ_LOG_FILE, O_CREAT | O_APPEND | FWRITE, 0644, 0,
+	    &qwz_log_vp, qwz_log_ctx) != 0) {
+		qwz_log_vp = NULL;
+		vfs_context_rele(qwz_log_ctx);
+		qwz_log_ctx = NULL;
+		IOLog("qwz: cannot open %s\n", QWZ_LOG_FILE);
+		return;
+	}
+	qwz_log_file_thread = current_thread();
+}
+
+void
+qwz_log_file_end(void)
+{
+	if (qwz_log_vp == NULL)
+		return;
+	qwz_log_file_thread = NULL;
+	vnode_close(qwz_log_vp, FWRITE, qwz_log_ctx);
+	qwz_log_vp = NULL;
+	vfs_context_rele(qwz_log_ctx);
+	qwz_log_ctx = NULL;
+}
 
 int
 qwz_vlog(const char *fmt, va_list ap)
@@ -37,6 +93,7 @@ qwz_vlog(const char *fmt, va_list ap)
 	if ((size_t)len >= sizeof(line))
 		len = sizeof(line) - 1;
 	IOLog("%s", line);
+	qwz_log_file_write(line, len);
 
 	/* Concurrent writers reserve disjoint ranges, so lines never interleave. */
 	start = __atomic_fetch_add(&qwz_log_head, (uint64_t)len, __ATOMIC_RELAXED);

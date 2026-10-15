@@ -119,10 +119,13 @@ ItlQwz::attach(IOPCIDevice *device)
 	PE_parse_boot_argn("qwz_debug", &qwz_debug, sizeof(qwz_debug));
 	QWZLOG("debug build, qwz_debug=0x%x", qwz_debug);
 #endif
+	QWZLOG("trace: qwz_compat_init");
 	qwz_compat_init();
 	qwz_stage_reset();	/* each attempt starts with a clean limit flag */
+	QWZLOG("trace: getMainCommandGate");
 	qwz_hal_gate = getMainCommandGate();
 	qwz_compat_set_gate(qwz_hal_gate);
+	QWZLOG("trace: gate %p, set controller", qwz_hal_gate);
 	qwz_compat_set_controller(getController());
 	/*
 	 * Stage 1 only creates a kernel thread that logs and exits, to tell a
@@ -142,18 +145,22 @@ ItlQwz::attach(IOPCIDevice *device)
 	if (!qwz_stage_ok(2, "driver setup: task queue thread (taskq_init)"))
 		return false;
 	static bool taskq_ready;
+	QWZLOG("trace: taskq_init (already done: %d)", taskq_ready);
 	if (!taskq_ready) {	/* a retried bring-up must not start systq twice */
 		taskq_init();
 		taskq_ready = true;
 	}
+	QWZLOG("trace: taskq_init returned; filling attach args (%zu bytes)", sizeof(pa));
 
 	bzero(&pa, sizeof(pa));
 	pa.pa_tag = device;
 	pa.pa_id = device->configRead16(kIOPCIConfigVendorID) |
 	    ((pcireg_t)device->configRead16(kIOPCIConfigDeviceID) << 16);
+	QWZLOG("trace: config reads done, id 0x%08x", pa.pa_id);
 	pa.pa_workloop = getMainWorkLoop();
 	pa.pa_owner = this;
 	pa.pa_controller = getController();
+	QWZLOG("trace: workloop %p controller %p", pa.pa_workloop, pa.pa_controller);
 
 	/*
 	 * Attach runs on the IOService start thread holding the gate, so the

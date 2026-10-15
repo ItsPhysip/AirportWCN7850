@@ -26,6 +26,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOCommandGate.h>
 #include <kern/thread_call.h>
+#include "qwz_log.h"
 
 /*
  * QwzMac: the task queues run on thread calls instead of dedicated kernel
@@ -109,8 +110,10 @@ taskq_setup(struct taskq *tq, const char *name)
 void
 taskq_init(void)
 {
+    qwz_log("qwz: trace: taskq_init: systq %p mtx %p\n", systq, systq->tq_mtx);
     if (systq->tq_mtx == NULL && !taskq_setup(systq, "systq"))
         IOLog("itlwm: taskq: cannot set up systq\n");
+    qwz_log("qwz: trace: taskq_init: mtx %p call %p\n", systq->tq_mtx, systq->tq_call);
 }
 
 struct taskq *

@@ -370,12 +370,17 @@ bool itlwm::start(IOService *provider)
     return true;
 }
 
+extern int qwz_stage_sysctl;	/* qwz/qwz_compat.cpp */
+
 bool itlwm::requestBringUp()
 {
     if (fStopping || fStartCall == NULL ||
         !OSCompareAndSwap(kBringUpIdle, kBringUpRunning, &fBringUp))
         return false;
-    qwz_log("qwz: bring-up requested (sysctl)\n");
+    qwz_log_file_begin();
+    qwz_log("qwz: ==== bring-up requested (sysctl), stage limit %d ====\n", qwz_stage_sysctl);
+    qwz_log("qwz: entering the thread call\n");
+    qwz_log_file_end();
     retain();
     if (thread_call_enter(fStartCall))
         release();
@@ -386,6 +391,8 @@ void itlwm::startThreadCall(thread_call_param_t owner, thread_call_param_t)
 {
     itlwm *that = (itlwm *)owner;
 
+    qwz_log_file_begin();
+    qwz_log("qwz: thread call running\n");
     if (!that->fStopping && that->finishStart()) {
         that->fBringUp = kBringUpDone;
         qwz_log_stage("running");
@@ -395,6 +402,8 @@ void itlwm::startThreadCall(thread_call_param_t owner, thread_call_param_t)
             "idle at the debug.qwz.stage limit; raise it and start again" :
             "bring-up failed; the driver stays idle, start again to retry");
     }
+    qwz_log("qwz: thread call done\n");
+    qwz_log_file_end();
     that->release();
 }
 
