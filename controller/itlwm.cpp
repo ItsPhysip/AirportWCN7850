@@ -312,6 +312,9 @@ bool itlwm::start(IOService *provider)
     pciNub->setBusMasterEnable(true);
     pciNub->setIOEnable(true);
     pciNub->setMemoryEnable(true);
+    /* QwzMac: MSI only; never let the card fall back to its INTx line. */
+    pciNub->configWrite16(kIOPCIConfigCommand,
+        pciNub->configRead16(kIOPCIConfigCommand) | 0x0400);
     if (pciNub->requestPowerDomainState(kIOPMPowerOn,
                                         (IOPowerConnection *) getParentEntry(gIOPowerPlane), IOPMLowestState) != IOPMNoErr) {
         return false;
@@ -392,6 +395,8 @@ void itlwm::startThreadCall(thread_call_param_t owner, thread_call_param_t)
     itlwm *that = (itlwm *)owner;
 
     qwz_log_file_begin();
+    if (_fWorkloop != NULL)
+        qwz_log_file_allow(_fWorkloop->getThread());
     qwz_log("qwz: thread call running\n");
     if (!that->fStopping && that->finishStart()) {
         that->fBringUp = kBringUpDone;

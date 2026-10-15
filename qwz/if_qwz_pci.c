@@ -2045,6 +2045,19 @@ qwz_pci_msi_config(struct qwz_softc *sc, bool enable)
 	struct qwz_pci_softc *psc = (struct qwz_pci_softc *)sc;
 	uint32_t val;
 
+#ifdef __APPLE__
+	/*
+	 * With MSI off the card falls back to its legacy INTx line unless
+	 * INTx is disabled in the command register. Linux and OpenBSD set
+	 * that bit when they use MSI; macOS does not. power_down clears MSI
+	 * enable, so after the chip reset an INTx assertion on the shared,
+	 * level-triggered line nobody acknowledges froze the machine.
+	 */
+	val = pci_conf_read(psc->sc_pc, psc->sc_tag, PCI_COMMAND_STATUS_REG);
+	if ((val & PCI_COMMAND_INTERRUPT_DISABLE) == 0)
+		pci_conf_write(psc->sc_pc, psc->sc_tag, PCI_COMMAND_STATUS_REG,
+		    (val & 0xffff) | PCI_COMMAND_INTERRUPT_DISABLE);
+#endif
 	val = pci_conf_read(psc->sc_pc, psc->sc_tag,
 	    psc->sc_msi_off + PCI_MSI_MC);
 

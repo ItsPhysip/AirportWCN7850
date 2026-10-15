@@ -25,13 +25,16 @@ static IOService *qwz_log_target;
 static vnode_t qwz_log_vp;
 static vfs_context_t qwz_log_ctx;
 static thread_t qwz_log_file_thread;
+static thread_t qwz_log_file_thread2;	/* the driver workloop (interrupts, timers) */
 
 static void
 qwz_log_file_write(const char *line, int len)
 {
 	uio_t uio;
 
-	if (qwz_log_vp == NULL || current_thread() != qwz_log_file_thread)
+	if (qwz_log_vp == NULL ||
+	    (current_thread() != qwz_log_file_thread &&
+	     current_thread() != qwz_log_file_thread2))
 		return;
 	uio = uio_create(1, 0, UIO_SYSSPACE, UIO_WRITE);
 	if (uio == NULL)
@@ -64,11 +67,18 @@ qwz_log_file_begin(void)
 }
 
 void
+qwz_log_file_allow(thread_t t)
+{
+	qwz_log_file_thread2 = t;
+}
+
+void
 qwz_log_file_end(void)
 {
 	if (qwz_log_vp == NULL)
 		return;
 	qwz_log_file_thread = NULL;
+	qwz_log_file_thread2 = NULL;
 	vnode_close(qwz_log_vp, FWRITE, qwz_log_ctx);
 	qwz_log_vp = NULL;
 	vfs_context_rele(qwz_log_ctx);

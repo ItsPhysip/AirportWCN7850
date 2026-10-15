@@ -39,5 +39,7 @@ void	qwz_log_publish(void);
 #define QWZ_LOG_FILE	"/private/var/log/qwzmac.log"
 void	qwz_log_file_begin(void);
 void	qwz_log_file_end(void);
+/* Also let this thread (the driver workloop) write while the file is open. */
+void	qwz_log_file_allow(struct thread *);
 
 #endif /* QWZ_LOG_H */
