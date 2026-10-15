@@ -1095,11 +1095,10 @@ qwz_stage_limit(void)
 	if (limit >= 0)
 		return limit;
 	/*
-	 * Opt-in: without qwz_stage the driver loads but does nothing, so a
-	 * boot stays safe. (NVRAM writes do not persist on the test machine;
-	 * put qwz_stage=<n> in the OpenCore boot-args instead.)
+	 * Full bring-up unless qwz_stage=<n> (boot-args; NVRAM writes do not
+	 * persist on some boards) limits it. -qwzoff disables the driver.
 	 */
-	limit = 0;
+	limit = 1000;
 	if (PE_parse_boot_argn("qwz_stage", &v, sizeof(v))) {
 		limit = v;
 	} else if ((opts = IORegistryEntry::fromPath("/options", gIODTPlane)) != NULL) {

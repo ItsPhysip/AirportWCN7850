@@ -56,7 +56,7 @@ The first build clones [MacKernelSDK](https://github.com/acidanthera/MacKernelSD
 
 ## Bring-up and debugging
 
-The bring-up is staged. `qwz_stage=<n>` in boot-args stops it before stage *n* and leaves the driver loaded and idle; without `qwz_stage` the driver does nothing (a safe boot). `qwz_stage=1000` runs everything at boot. Stages: 1 kernel-thread test, 2 task queue, 3 gate, 4 attach, 5 config/BAR, 6 MSI, 7 D0 + first registers, 8 DMA, 9 attach done, 10 chip reset, 11 MHI, 12 firmware download, 13 MHI channels, 14 powered up, 15 QMI done, 16 CE/DP rings, 17 WMI ready, 18 core started, 19 pdev + mac, 20 init done. Stages 15–20 park (firmware left running, interrupts off) instead of cleaning up; reboot before another attempt.
+The bring-up runs at boot. `qwz_stage=<n>` in boot-args stops it before stage *n* and leaves the driver loaded and idle; `-qwzoff` disables the driver. Stages: 1 task queue, 2 gate, 3 attach, 4 config/BAR, 5 MSI, 6 D0 + first registers, 7 DMA, 8 attach done, 9 chip reset, 10 MHI, 11 firmware download, 12 MHI channels, 13 powered up, 14 QMI done, 15 CE/DP rings, 16 WMI ready, 17 core started, 18 pdev + mac, 19 init done. Stages 14–19 park (firmware left running, interrupts off) instead of cleaning up; reboot before another attempt.
 
 From the terminal, with the driver idle:
 

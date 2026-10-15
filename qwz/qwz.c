@@ -231,8 +231,8 @@ qwz_stage_park(struct qwz_softc *sc, int n, const char *what)
 	if (test_bit(ATH12K_FLAG_DEVICE_INIT_DONE, sc->sc_flags))
 		qwz_pcic_ce_irqs_disable(sc);
 	qwz_stage_set_parked();
-	QWZ_TRACE("parked at stage %d: firmware running, chip interrupts off; "
-	    "reboot before the next attempt", n);
+	printf("qwz: parked at stage %d: firmware running, chip interrupts off; "
+	    "reboot before the next attempt\n", n);
 	return 0;
 }
 #endif
@@ -382,7 +382,7 @@ qwz_init(struct ifnet *ifp)
 		ieee80211_media_init(ifp);	/* macOS: itl80211 fills in the callbacks */
 	}
 #ifdef __APPLE__
-	if (!qwz_stage_park(sc, 20, "qwz_init done (channels, MAC address, media); next is the return to attach")) {
+	if (!qwz_stage_park(sc, 19, "qwz_init done (channels, MAC address, media); next is the return to attach")) {
 		splx(s);
 		return QWZ_EPARKED;
 	}
@@ -18824,7 +18824,7 @@ qwz_core_start(struct qwz_softc *sc)
 		goto err_hif_stop;
 	}
 #ifdef __APPLE__
-	if (!qwz_stage_park(sc, 17, "WMI service ready; next is REO setup, WMI init and hw mode"))
+	if (!qwz_stage_park(sc, 16, "WMI service ready; next is REO setup, WMI init and hw mode"))
 		return QWZ_EPARKED;
 #endif
 #if 0
@@ -18889,7 +18889,7 @@ qwz_core_start(struct qwz_softc *sc)
 		goto err_reo_cleanup;
 	}
 #ifdef __APPLE__
-	if (!qwz_stage_park(sc, 18, "core started (WMI init, hw mode, HTT version); next is DP pdev alloc and mac register"))
+	if (!qwz_stage_park(sc, 17, "core started (WMI init, hw mode, HTT version); next is DP pdev alloc and mac register"))
 		return QWZ_EPARKED;
 #endif
 
@@ -18917,16 +18917,11 @@ qwz_core_stop(struct qwz_softc *sc)
 	    !test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) &&
 	    !test_bit(ATH12K_FLAG_QMI_FAIL, sc->sc_flags))
 		qwz_qmi_firmware_stop(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_qmi_firmware_stop(sc)");
 
 	qwz_power_down(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_power_down(sc)");
 	sc->ops.stop(sc);
-	QWZ_TRACE("%s: after %s", __func__, "sc->ops.stop(sc)");
 	qwz_wmi_detach(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_wmi_detach(sc)");
 	qwz_dp_pdev_reo_cleanup(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_dp_pdev_reo_cleanup(sc)");
 }
 
 void
@@ -18995,30 +18990,23 @@ qwz_core_deinit(struct qwz_softc *sc)
 	mutex_lock(&ab->core_lock);
 #endif
 	sc->ops.irq_disable(sc);
-	QWZ_TRACE("%s: after %s", __func__, "sc->ops.irq_disable(sc)");
 
 	qwz_core_stop(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_core_stop(sc)");
 	qwz_core_pdev_destroy(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_core_pdev_destroy(sc)");
 #ifdef notyet
 	mutex_unlock(&ab->core_lock);
 #endif
 	qwz_vif_purge(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_vif_purge(sc)");
 	qwz_free_peers(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_free_peers(sc)");
 #if 0
 	ath12k_mac_destroy(ab);
 	ath12k_debugfs_soc_destroy(ab);
 #endif
 	qwz_dp_free(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_dp_free(sc)");
 #if 0
 	ath12k_reg_free(ab);
 #endif
 	qwz_qmi_deinit_service(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_qmi_deinit_service(sc)");
 
 	hal->num_shadow_reg_configured = 0;
 
@@ -19041,7 +19029,7 @@ qwz_core_qmi_firmware_ready(struct qwz_softc *sc)
 		return ret;
 	}
 #ifdef __APPLE__
-	if (!qwz_stage_park(sc, 15, "QMI handshake done, firmware in WLAN mode; next is CE pipes and DP alloc"))
+	if (!qwz_stage_park(sc, 14, "QMI handshake done, firmware in WLAN mode; next is CE pipes and DP alloc"))
 		return QWZ_EPARKED;
 #endif
 
@@ -19059,7 +19047,7 @@ qwz_core_qmi_firmware_ready(struct qwz_softc *sc)
 		goto err_firmware_stop;
 	}
 #ifdef __APPLE__
-	if (!qwz_stage_park(sc, 16, "CE pipes and DP rings allocated; next is core start (WMI, HTC, HTT)"))
+	if (!qwz_stage_park(sc, 15, "CE pipes and DP rings allocated; next is core start (WMI, HTC, HTT)"))
 		return QWZ_EPARKED;
 #endif
 
@@ -19108,7 +19096,7 @@ qwz_core_qmi_firmware_ready(struct qwz_softc *sc)
 		goto err_core_stop;
 	}
 #ifdef __APPLE__
-	if (!qwz_stage_park(sc, 19, "DP pdev and mac registered; next is channel init, MAC address and media init"))
+	if (!qwz_stage_park(sc, 18, "DP pdev and mac registered; next is channel init, MAC address and media init"))
 		return QWZ_EPARKED;
 #endif
 
@@ -19267,7 +19255,7 @@ qwz_core_init(struct qwz_softc *sc)
 		    sc->sc_dev.dv_xname, error);
 		qwz_core_init_cleanup(sc, 0);
 	}
-	else if (!qwz_stage_ok(14, "powered up; next is the QMI handshake")) {
+	else if (!qwz_stage_ok(13, "powered up; next is the QMI handshake")) {
 		qwz_core_init_cleanup(sc, 0);
 		error = EIO;
 	}
@@ -25191,7 +25179,6 @@ qwz_attach(struct qwz_softc *sc)
 	sc->bss_peer_id = HAL_INVALID_PEERID;
 
 	error = qwz_init(ifp);
-	QWZ_TRACE("%s: after %s", __func__, "error = qwz_init(ifp)");
 	if (error)
 		return;
 
@@ -25203,7 +25190,6 @@ qwz_attach(struct qwz_softc *sc)
 	 * the attach released the command gate.
 	 */
 	sc->ops.irq_disable(sc);
-	QWZ_TRACE("%s: firmware left running, interrupts off until the interface is up", __func__);
 #else
 	/* Turn device off until interface comes up. */
 	qwz_core_deinit(sc);

@@ -690,7 +690,7 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	psc->sc_pc = pa->pa_pc;
 	psc->sc_tag = pa->pa_tag;
 
-	if (!qwz_stage_ok(5, "PCI config space and BAR mapping"))
+	if (!qwz_stage_ok(4, "PCI config space and BAR mapping"))
 		return;
 
 #ifdef __HAVE_FDT
@@ -768,7 +768,7 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 		psc->mhi_irq[MHI_ER_DATA] = 2;
 	}
 
-	if (!qwz_stage_ok(6, "MSI interrupt"))
+	if (!qwz_stage_ok(5, "MSI interrupt"))
 		return;
 	intrstr = pci_intr_string(psc->sc_pc, ih);
 	snprintf(psc->sc_ivname[0], sizeof(psc->sc_ivname[0]), "%s:bhi",
@@ -824,7 +824,7 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 		}
 	}
 
-	if (!qwz_stage_ok(7, "power state D0 and first register reads"))
+	if (!qwz_stage_ok(6, "power state D0 and first register reads"))
 		return;
 	pci_set_powerstate(pa->pa_pc, pa->pa_tag, PCI_PMCSR_STATE_D0);
 
@@ -872,7 +872,7 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	if (error)
 		goto err_pci_disable_msi;
 
-	if (!qwz_stage_ok(8, "DMA memory below 4 GB for MHI and rings"))
+	if (!qwz_stage_ok(7, "DMA memory below 4 GB for MHI and rings"))
 		goto err_vif_free;
 	psc->chan_ctxt = qwz_dmamem_alloc(sc->sc_dmat,
 	    sizeof(struct qwz_mhi_chan_ctxt) * psc->max_chan, 0);
@@ -1036,7 +1036,7 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	 * We cannot read the MAC address without loading the
 	 * firmware from disk. Postpone until mountroot is done.
 	 */
-	if (!qwz_stage_ok(9, "attach done; next is the firmware boot")) {
+	if (!qwz_stage_ok(8, "attach done; next is the firmware boot")) {
 		ieee80211_ifdetach(ifp);
 		if_detach(ifp);
 		ifp->if_softc = NULL;	/* report the attach as failed */
@@ -1136,7 +1136,6 @@ qwz_pci_attach_hook(struct device *self)
 	int s = splnet();
 
 	qwz_attach(sc);
-	QWZ_TRACE("%s: qwz_attach returned", __func__);
 
 	splx(s);
 }
@@ -2133,7 +2132,7 @@ qwz_pci_power_up(struct qwz_softc *sc)
 	psc->sc_powered_down = 0;
 #endif
 
-	if (!qwz_stage_ok(10, "chip reset (LTSSM, SoC global reset)"))
+	if (!qwz_stage_ok(9, "chip reset (LTSSM, SoC global reset)"))
 		return EIO;
 	qwz_pci_sw_reset(sc, true);
 
@@ -2144,7 +2143,7 @@ qwz_pci_power_up(struct qwz_softc *sc)
 
 	qwz_pci_msi_enable(sc);
 
-	if (!qwz_stage_ok(11, "MHI start (BHI registers, execution environment)"))
+	if (!qwz_stage_ok(10, "MHI start (BHI registers, execution environment)"))
 		return EIO;
 	error = qwz_mhi_start(psc);
 	if (error)
@@ -2480,7 +2479,6 @@ qwz_pci_power_down(struct qwz_softc *sc)
 #ifdef __APPLE__
 	psc->sc_powered_down = 1;
 #endif
-	QWZ_TRACE("%s: done", __func__);
 }
 
 void
@@ -2989,7 +2987,7 @@ qwz_mhi_start(struct qwz_pci_softc *psc)
 
 	/* Transition to primary runtime. */
 	if (MHI_IN_PBL(ee)) {
-		if (!qwz_stage_ok(12, "firmware download (BHI/BHIE DMA)"))
+		if (!qwz_stage_ok(11, "firmware download (BHI/BHIE DMA)"))
 			return EIO;
 		ret = qwz_mhi_fw_load_handler(psc);
 		if (ret)
@@ -2997,7 +2995,7 @@ qwz_mhi_start(struct qwz_pci_softc *psc)
 
 		/* XXX without this delay starting the channels may fail */
 		delay(1000);
-		if (!qwz_stage_ok(13, "MHI channels"))
+		if (!qwz_stage_ok(12, "MHI channels"))
 			return EIO;
 		qwz_mhi_start_channels(psc);
 	} else {
@@ -4341,7 +4339,6 @@ qwz_pci_macos_attach(struct qwz_softc *sc, struct pci_attach_args *pa)
 
 	/* config_mountroot() deferred qwz_attach(): firmware is built in. */
 	qwz_compat_run_mountroot();
-	QWZ_TRACE("%s: mountroot hook returned", __func__);
 	if (qwz_stage_parked())
 		return QWZ_EPARKED;	/* stage >= 15 refused: leave everything as is */
 	if (IEEE80211_ADDR_EQ(ic->ic_myaddr, etheranyaddr)) {

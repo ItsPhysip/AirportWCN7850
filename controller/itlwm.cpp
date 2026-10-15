@@ -525,7 +525,6 @@ bool itlwm::finishStart()
         XYLog("attach fail\n");
         return false;
     }
-    qwz_log("qwz: trace: HAL attach done; attaching the network interface\n");
     if (PE_parse_boot_argn("-novht", &boot_value, sizeof(boot_value)))
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOVHT;
     if (PE_parse_boot_argn("-noht40", &boot_value, sizeof(boot_value)))
@@ -546,14 +545,12 @@ bool itlwm::finishStart()
     }
     fWatchdogWorkLoop->addEventSource(watchdogTimer);
     setLinkStatus(kIONetworkLinkValid);
-    qwz_log("qwz: trace: watchdog ready; attaching the network interface\n");
     if (!attachInterface((IONetworkInterface **)&fNetIf, true)) {
         XYLog("attach to interface fail\n");
         fHalService->detach(pciNub);
         fNetIf = NULL;
         return false;
     }
-    qwz_log("qwz: trace: network interface attached\n");
     OSObject *wifiEntryObject = NULL;
     OSDictionary *wifiEntry = NULL;
     OSString *entryKey = NULL;
@@ -582,10 +579,8 @@ bool itlwm::finishStart()
     if (TAILQ_EMPTY(&fHalService->get80211Controller()->ic_ess)) {
         fHalService->get80211Controller()->ic_flags |= IEEE80211_F_AUTO_JOIN;
     }
-    qwz_log("qwz: trace: registering services\n");
     registerService();
     fNetIf->registerService();
-    qwz_log("qwz: trace: services registered\n");
     return true;
 }
 
@@ -714,11 +709,9 @@ IOReturn itlwm::enable(IONetworkInterface *netif)
 {
     IOReturn ret;
 
-    qwz_log("qwz: trace: enable()\n");
     super::enable(netif);
     _fCommandGate->enable();
     ret = fHalService->enable(netif);
-    qwz_log("qwz: trace: HAL enable returned 0x%x\n", ret);
     if (watchdogTimer != NULL) {
         watchdogTimer->setTimeoutMS(kWatchDogTimerPeriod);
         watchdogTimer->enable();
@@ -728,7 +721,6 @@ IOReturn itlwm::enable(IONetworkInterface *netif)
 
 IOReturn itlwm::disable(IONetworkInterface *netif)
 {
-    qwz_log("qwz: trace: disable()\n");
     super::disable(netif);
     if (watchdogTimer != NULL) {
         watchdogTimer->cancelTimeout();

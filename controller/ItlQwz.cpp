@@ -60,18 +60,6 @@ qwz_if_watchdog_wrapper(struct _ifnet *ifp)
 	qwz_hal_gate->runAction(qwz_watchdog_gated, ifp);
 }
 
-static volatile int qwz_test_thread_ran;
-
-static void
-qwz_test_thread(void *, wait_result_t)
-{
-	qwz_log("qwz: test thread running, blocking for 20 ms\n");
-	IOSleep(20);	/* block, so the thread is context-switched like a taskq thread */
-	qwz_test_thread_ran = 1;
-	qwz_log("qwz: test thread resumed, exiting\n");
-	thread_terminate(current_thread());
-}
-
 bool
 ItlQwz::qwz_match(IOPCIDevice *device)
 {
@@ -93,14 +81,13 @@ ItlQwz::attachGated(OSObject *, void *arg0, void *arg1, void *, void *)
 	struct pci_attach_args *pa = (struct pci_attach_args *)arg0;
 	int err;
 
-	if (!qwz_stage_ok(4, "inside the qwz attach, holding the gate"))
+	if (!qwz_stage_ok(3, "inside the qwz attach, holding the gate"))
 		return kIOReturnError;
 
 	that->sc = qwz_pci_macos_alloc();
 	if (that->sc == NULL)
 		return kIOReturnNoMemory;
 	err = qwz_pci_macos_attach(that->sc, pa);
-	QWZLOG("trace: qwz_pci_macos_attach returned %d", err);
 	if (err == QWZ_EPARKED) {
 		/* Parked at a stage >= 15: keep sc and the running firmware. */
 		QWZLOG("parked: the driver stays idle with the firmware running");
@@ -136,78 +123,43 @@ ItlQwz::attach(IOPCIDevice *device)
 		QWZLOG("parked by an earlier attempt; reboot before starting again");
 		return false;
 	}
-	QWZLOG("trace: qwz_compat_init");
 	qwz_compat_init();
 	qwz_stage_reset();	/* each attempt starts with a clean limit flag */
-	QWZLOG("trace: getMainCommandGate");
 	qwz_hal_gate = getMainCommandGate();
 	qwz_compat_set_gate(qwz_hal_gate);
-	QWZLOG("trace: gate %p, set controller", qwz_hal_gate);
 	qwz_compat_set_controller(getController());
-	/*
-	 * Stage 1 only creates a kernel thread that logs and exits, to tell a
-	 * broken kernel_thread_start apart from the task-queue code itself.
-	 */
-	if (!qwz_stage_ok(1, "kernel_thread_start test (a thread that logs and exits)"))
-		return false;
-	{
-		thread_t t;
-		if (kernel_thread_start(qwz_test_thread, NULL, &t) == KERN_SUCCESS) {
-			thread_deallocate(t);
-			IOSleep(200);
-			QWZLOG("test thread result: %d (1 = it ran)", qwz_test_thread_ran);
-		} else
-			QWZLOG("kernel_thread_start failed");
-	}
-	if (!qwz_stage_ok(2, "driver setup: task queue thread (taskq_init)"))
+	if (!qwz_stage_ok(1, "driver setup: task queue thread (taskq_init)"))
 		return false;
 	static bool taskq_ready;
-	QWZLOG("trace: taskq_init (already done: %d)", taskq_ready);
 	if (!taskq_ready) {	/* a retried bring-up must not start systq twice */
 		taskq_init();
 		taskq_ready = true;
 	}
-	QWZLOG("trace: taskq_init returned; pausing 300 ms to see if a delayed effect hits");
-	IOSleep(300);
-	QWZLOG("trace: pause over; filling attach args (%zu bytes at %p)", sizeof(pa), &pa);
 
 	bzero(&pa, sizeof(pa));
-	QWZLOG("trace: bzero done");
 	pa.pa_tag = device;
-	QWZLOG("trace: pa_tag set (%p); reading vendor id", device);
-	{
-		UInt16 vid = device->configRead16(kIOPCIConfigVendorID);
-		QWZLOG("trace: vendor 0x%04x; reading device id", vid);
-		UInt16 did = device->configRead16(kIOPCIConfigDeviceID);
-		QWZLOG("trace: device 0x%04x", did);
-		pa.pa_id = vid | ((pcireg_t)did << 16);
-	}
-	QWZLOG("trace: config reads done, id 0x%08x", pa.pa_id);
+	pa.pa_id = device->configRead16(kIOPCIConfigVendorID) |
+	    ((pcireg_t)device->configRead16(kIOPCIConfigDeviceID) << 16);
 	pa.pa_workloop = getMainWorkLoop();
 	pa.pa_owner = this;
 	pa.pa_controller = getController();
-	QWZLOG("trace: workloop %p controller %p", pa.pa_workloop, pa.pa_controller);
 
 	/*
 	 * Attach runs on the IOService start thread holding the gate, so the
 	 * firmware boot can tsleep() while the workloop delivers interrupts.
 	 */
-	if (!qwz_stage_ok(3, "take the command gate (runAction)"))
+	if (!qwz_stage_ok(2, "take the command gate (runAction)"))
 		return false;
 	ret = qwz_hal_gate->runAction(attachGated, &pa, this);
-	QWZLOG("trace: attachGated returned 0x%x (gate released)", ret);
 	if (ret != kIOReturnSuccess)
 		return false;
 
-	QWZLOG("trace: sc %p", sc);
 	ifp = &sc->sc_ic.ic_if;
-	QWZLOG("trace: ifp %p if_start %p if_watchdog %p", ifp, ifp->if_start, ifp->if_watchdog);
 	qwz_if_start = ifp->if_start;
 	qwz_if_watchdog = ifp->if_watchdog;
 	ifp->if_start = qwz_if_start_wrapper;
 	ifp->if_watchdog = qwz_if_watchdog_wrapper;
 
-	QWZLOG("trace: if_start/if_watchdog wrapped");
 	snprintf(fwVersion, sizeof(fwVersion), "%s", sc->qmi_target.fw_build_id);
 	QWZLOG("attached: MAC %s, firmware %s", ether_sprintf(sc->sc_ic.ic_myaddr), fwVersion);
 	return true;

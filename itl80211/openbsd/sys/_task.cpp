@@ -110,10 +110,8 @@ taskq_setup(struct taskq *tq, const char *name)
 void
 taskq_init(void)
 {
-    qwz_log("qwz: trace: taskq_init: systq %p mtx %p\n", systq, systq->tq_mtx);
     if (systq->tq_mtx == NULL && !taskq_setup(systq, "systq"))
         IOLog("itlwm: taskq: cannot set up systq\n");
-    qwz_log("qwz: trace: taskq_init: mtx %p call %p\n", systq->tq_mtx, systq->tq_call);
 }
 
 struct taskq *
