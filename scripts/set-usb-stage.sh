@@ -39,6 +39,12 @@ PY
 # as its own synced log line, which slows the handshake enough to time out.
 args=$($PB -c "Print $KEY" "$CFG" | tr ' ' '\n' | grep -v '^qwz_stage=' | { [ -n "${QWZ_DEBUG:-}" ] && grep -v '^qwz_debug=' || cat; } | tr '\n' ' ')
 [ -n "${QWZ_DEBUG:-}" ] && args="${args}qwz_debug=$QWZ_DEBUG "
+# QWZ_PANIC=1 keeps the kernel on the panic screen (debug=0x144) instead of rebooting; QWZ_PANIC=0 restores debug=0x100.
+[ "${QWZ_PANIC:-}" = 1 ] && args=$(echo "$args" | sed 's/debug=0x100/debug=0x144/')
+[ "${QWZ_PANIC:-}" = 0 ] && args=$(echo "$args" | sed 's/debug=0x144/debug=0x100/')
+# QWZ_OFF=1 adds -qwzoff (the driver refuses to match); QWZ_OFF=0 removes it.
+[ "${QWZ_OFF:-}" = 1 ] && args="-qwzoff ${args}"
+[ "${QWZ_OFF:-}" = 0 ] && args=$(echo "$args" | sed 's/-qwzoff //')
 $PB -c "Set $KEY ${args}qwz_stage=$N" "$CFG"
 echo "$PRODUCT ($SRC) $(shasum -a 256 "$SRC"/$PRODUCT.kext/Contents/MacOS/$PRODUCT | cut -c1-8) copied to $vol"
 echo "boot-args: $($PB -c "Print $KEY" "$CFG")"

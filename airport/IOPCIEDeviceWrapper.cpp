@@ -69,6 +69,13 @@ probe(IOService *provider, SInt32 *score)
         return NULL;
     qwz_log_set_target(device);	/* QwzMacLog/QwzMacStage on the PCI device, as the HeliPort build */
     qwz_log_stage("probe (AirportQwz)");
+    {
+        int off = 0;
+        if (PE_parse_boot_argn("-qwzoff", &off, sizeof(off))) {
+            IOLog("qwz: AirportQwz disabled by the -qwzoff boot-arg\n");
+            return NULL;
+        }
+    }
     if (ItlQwz::qwz_match(device)) {
         isMatch = true;
         fHalService = new ItlQwz;
