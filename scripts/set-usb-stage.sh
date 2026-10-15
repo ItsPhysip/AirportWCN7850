@@ -1,5 +1,5 @@
 #!/bin/bash
-# [QWZ_DEBUG=<mask>] [QWZ_BUILD=release] [QWZ_PRODUCT=AirportQwz] set-usb-stage.sh <n>: mount the USB EFI, copy build-debug/QwzMac.kext there,
+# [QWZ_DEBUG=<mask>] [QWZ_BUILD=release] [QWZ_PRODUCT=AirportWCN7850] set-usb-stage.sh <n>: mount the USB EFI, copy build-debug/QwzMac.kext there,
 # set qwz_stage=<n> in the config's boot-args (the stage limit; 0 = driver idle,
 # 1000 = full bring-up), then unmount. Needs sudo for the mount.
 set -euo pipefail
@@ -15,20 +15,20 @@ vol=$(mount | awk -v p="$part" '$1==p{print $3}')
 CFG=$vol/EFI/OC/config.plist
 [ -f "$CFG" ] || { echo "STOP: $CFG not found"; exit 1; }
 # QWZ_BUILD=release (env) deploys from build/ instead of build-debug/.
-# QWZ_PRODUCT=AirportQwz (env) deploys the native Wi-Fi kext instead of the
+# QWZ_PRODUCT=AirportWCN7850 (env) deploys the native Wi-Fi kext instead of the
 # HeliPort one; both match the card, so the other one is removed and the
 # config's Kernel>Add entry is pointed at the chosen kext.
 SRC=build-debug; [ "${QWZ_BUILD:-}" = release ] && SRC=build
 PRODUCT=${QWZ_PRODUCT:-QwzMac}
-OTHER=QwzMac; [ "$PRODUCT" = QwzMac ] && OTHER=AirportQwz
-rm -rf "$vol/EFI/OC/Kexts/QwzMac.kext" "$vol/EFI/OC/Kexts/AirportQwz.kext"
+OTHER=QwzMac; [ "$PRODUCT" = QwzMac ] && OTHER=AirportWCN7850
+rm -rf "$vol/EFI/OC/Kexts/QwzMac.kext" "$vol/EFI/OC/Kexts/AirportWCN7850.kext" "$vol/EFI/OC/Kexts/AirportQwz.kext"
 cp -R "$SRC"/$PRODUCT.kext "$vol/EFI/OC/Kexts/"
 python3 - "$CFG" "$PRODUCT" <<'PY'
 import plistlib, sys
 cfg, product = sys.argv[1], sys.argv[2]
 d = plistlib.load(open(cfg, 'rb'))
 for k in d['Kernel']['Add']:
-    if k['BundlePath'] in ('QwzMac.kext', 'AirportQwz.kext'):
+    if k['BundlePath'] in ('QwzMac.kext', 'AirportWCN7850.kext', 'AirportQwz.kext'):
         k['BundlePath'] = product + '.kext'
         k['ExecutablePath'] = 'Contents/MacOS/' + product
         k['Comment'] = 'Qualcomm WCN7850 Wi-Fi (' + product + ')'
@@ -42,7 +42,7 @@ args=$($PB -c "Print $KEY" "$CFG" | tr ' ' '\n' | grep -v '^qwz_stage=' | { [ -n
 # QWZ_PANIC=1 keeps the kernel on the panic screen (debug=0x144) instead of rebooting; QWZ_PANIC=0 restores debug=0x100.
 [ "${QWZ_PANIC:-}" = 1 ] && args=$(echo "$args" | sed 's/debug=0x100/debug=0x144/')
 [ "${QWZ_PANIC:-}" = 0 ] && args=$(echo "$args" | sed 's/debug=0x144/debug=0x100/')
-# QWZ_AIRPORT_DELAY=<s> sets qwz_airport_delay=<s> (AirportQwz starts its Wi-Fi layer <s> seconds after boot, logging to the file); 0 removes it.
+# QWZ_AIRPORT_DELAY=<s> sets qwz_airport_delay=<s> (AirportWCN7850 starts its Wi-Fi layer <s> seconds after boot, logging to the file); 0 removes it.
 args=$(echo "$args" | tr ' ' '\n' | grep -v '^qwz_airport_delay=' | tr '\n' ' ')
 [ -n "${QWZ_AIRPORT_DELAY:-}" ] && [ "${QWZ_AIRPORT_DELAY}" != 0 ] && args="${args}qwz_airport_delay=$QWZ_AIRPORT_DELAY "
 # QWZ_OFF=1 adds -qwzoff (the driver refuses to match); QWZ_OFF=0 removes it.

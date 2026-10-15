@@ -57,7 +57,7 @@
 #include "qwz_compat.h"	/* macOS: replaces the OpenBSD kernel headers */
 #define QWZ_TRACE(fmt, ...)	qwz_log("qwz: trace: " fmt "\n", ##__VA_ARGS__)
 #ifdef AIRPORT_WCL
-#include "WCL/WCL.hpp"	/* AirportQwz: scan helpers (scanUsesProbes, scanChannelSelected) */
+#include "WCL/WCL.hpp"	/* AirportWCN7850: scan helpers (scanUsesProbes, scanChannelSelected) */
 #endif
 
 /* XXX linux porting goo */
@@ -244,7 +244,7 @@ qwz_stage_park(struct qwz_softc *sc, int n, const char *what)
 static int qwz_init_impl(struct ifnet *);
 
 /*
- * The native Wi-Fi interface (AirportQwz) reports the adapter to macOS as
+ * The native Wi-Fi interface (AirportWCN7850) reports the adapter to macOS as
  * resetting, then available or gone, from these events.
  */
 int
@@ -24313,7 +24313,7 @@ qwz_scan(struct qwz_softc *sc)
 
 #ifdef AIRPORT_WCL
 	/*
-	 * A scan macOS asked for (AirportQwz): active when it wants probes,
+	 * A scan macOS asked for (AirportWCN7850): active when it wants probes,
 	 * with its SSID (hidden networks), on its channels (below). Scans the
 	 * driver starts itself keep OpenBSD's behaviour.
 	 */

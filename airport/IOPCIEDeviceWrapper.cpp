@@ -70,11 +70,11 @@ probe(IOService *provider, SInt32 *score)
     if (!device)
         return NULL;
     qwz_log_set_target(device);	/* QwzMacLog/QwzMacStage on the PCI device, as the HeliPort build */
-    qwz_log_stage("probe (AirportQwz)");
+    qwz_log_stage("probe (AirportWCN7850)");
     {
         int off = 0;
         if (PE_parse_boot_argn("-qwzoff", &off, sizeof(off))) {
-            IOLog("qwz: AirportQwz disabled by the -qwzoff boot-arg\n");
+            IOLog("qwz: AirportWCN7850 disabled by the -qwzoff boot-arg\n");
             return NULL;
         }
     }
@@ -132,7 +132,7 @@ start(IOService *provider)
         thread_call_t tc = thread_call_allocate(&IOPCIEDeviceWrapper::delayedRegister, this);
         if (tc != NULL) {
             uint64_t deadline;
-            qwz_log("qwz: AirportQwz: Wi-Fi layer start delayed by %u s\n", delay);
+            qwz_log("qwz: AirportWCN7850: Wi-Fi layer start delayed by %u s\n", delay);
             retain();
             clock_interval_to_deadline(delay, kSecondScale, &deadline);
             thread_call_enter_delayed(tc, deadline);
@@ -149,7 +149,7 @@ delayedRegister(thread_call_param_t owner, thread_call_param_t)
     IOPCIEDeviceWrapper *self = (IOPCIEDeviceWrapper *)owner;
 
     qwz_log_file_begin();
-    qwz_log("qwz: ==== AirportQwz: registering the PCI wrapper (Wi-Fi layer matches now) ====\n");
+    qwz_log("qwz: ==== AirportWCN7850: registering the PCI wrapper (Wi-Fi layer matches now) ====\n");
     self->registerService();
     self->release();
 }

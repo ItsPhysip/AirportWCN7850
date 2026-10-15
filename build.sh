@@ -13,8 +13,8 @@ VERSION=$(cat VERSION)
 
 # Two products from one tree:
 #   QwzMac.kext      Ethernet-style interface + HeliPort (controller/)
-#   AirportQwz.kext  native Wi-Fi through Apple's IO80211Family (airport/), macOS 26
-# PRODUCT=QwzMac|AirportQwz|all (default all).
+#   AirportWCN7850.kext  native Wi-Fi through Apple's IO80211Family (airport/), macOS 26
+# PRODUCT=QwzMac|AirportWCN7850|all (default all).
 PRODUCT=${PRODUCT:-all}
 
 COMMON=(-arch x86_64 -mmacosx-version-min=13.0 -fapple-kext -mkernel -nostdinc
@@ -84,9 +84,9 @@ CORE=$(find itl80211 include/HAL qwz firmware -name '*.c' -o -name '*.cpp' | sor
 if [ "$PRODUCT" = all ] || [ "$PRODUCT" = QwzMac ]; then
   build_kext QwzMac Info.plist qwzmac "$CORE $(find controller -name '*.cpp' | sort)"
 fi
-if [ "$PRODUCT" = all ] || [ "$PRODUCT" = AirportQwz ]; then
+if [ "$PRODUCT" = all ] || [ "$PRODUCT" = AirportWCN7850 ]; then
   # controller/ItlQwz.cpp is the HAL and is shared; itlwm.cpp, the user client and pm.cpp are HeliPort-only.
-  build_kext AirportQwz airport/Info.plist airport "$CORE controller/ItlQwz.cpp $(find airport -name '*.cpp' | sort)" \
+  build_kext AirportWCN7850 airport/Info.plist airport "$CORE controller/ItlQwz.cpp $(find airport -name '*.cpp' | sort)" \
     -I airport -I airport/WCL -I include/Airport $(find include/Airport -type d | sed 's/^/-I /' | tr '\n' ' ') \
     -DAIRPORT -DAIRPORT_WCL -D__IO80211_TARGET=__MAC_26_0 -DIO80211FAMILY_V2
 fi

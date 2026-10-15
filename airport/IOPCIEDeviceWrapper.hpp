@@ -35,7 +35,7 @@ public:
 
 private:
     /*
-     * The driver log, published on this service every 2 s (AirportQwzLog):
+     * The driver log, published on this service every 2 s (AirportWCN7850Log):
      * IOLog from an OpenCore-injected kext never reaches the unified log, so
      * this is how a test boot without network keeps its log (see
      * mtkwlan-logsaver), also when the Wi-Fi controller fails to start.

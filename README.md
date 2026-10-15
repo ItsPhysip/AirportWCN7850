@@ -4,7 +4,7 @@ A macOS driver for the **Qualcomm WCN7850** Wi-Fi chip (FastConnect 7800, sold a
 
 It is a port of OpenBSD's [`qwz(4)`](https://man.openbsd.org/qwz.4) driver, running on the 802.11 stack and network controller from [itlwm](https://github.com/OpenIntelWireless/itlwm). Like itlwm, it shows up in macOS as an Ethernet interface; you pick networks with [HeliPort](https://github.com/OpenIntelWireless/HeliPort).
 
-> **Status: working on one machine (2026-10-15).** On an MSI MAG X870 Tomahawk WiFi (Ryzen, macOS 26.7 Tahoe, OpenCore) the card boots its firmware, scans, joins a WPA2 network through HeliPort, gets a DHCP address and moves traffic (about 170 Mbit/s down, 60 up on first measurement). It is still a debug build with a staged bring-up; see [Bring-up and debugging](#bring-up-and-debugging). Read [Testing safely](#testing-safely) before installing.
+> **Status: working on one machine (2026-10-15).** On an MSI MAG X870 Tomahawk WiFi (Ryzen, macOS 26.7 Tahoe, OpenCore, no OCLP) both builds work: `QwzMac.kext` (Ethernet-style interface + HeliPort) and `AirportWCN7850.kext` (native Wi-Fi: the macOS Wi-Fi menu, private addresses, Apple's own Wi-Fi stack). Scans, WPA2 joins, DHCP and traffic at about 170 Mbit/s each way (802.11n rates; the chip's 11ac/ax/be modes are not driven yet). See [Bring-up and debugging](#bring-up-and-debugging) and [Testing safely](#testing-safely).
 
 ## What to expect
 
@@ -16,7 +16,7 @@ From `qwz(4)` (this is what OpenBSD supports today):
 
 From the macOS side:
 
-- No native Wi-Fi menu, AirDrop, Handoff or Continuity: the interface is Ethernet, as with itlwm.
+- `QwzMac.kext`: no native Wi-Fi menu, AirDrop, Handoff or Continuity; the interface is Ethernet, as with itlwm. `AirportWCN7850.kext`: native Wi-Fi menu and settings through Apple's IO80211Family (laobamac's AirportItlwm "WCL" layer, as reshaped by SimpleMtkWlan), macOS 26 only, no OCLP; AirDrop/AWDL and WPA3-only networks still unsupported. Use one or the other: both match the card.
 - Only one PCIe interrupt vector is used for now. The chip supports 32, but one is enough for qwz, which has a single-vector mode.
 
 ## How it works
