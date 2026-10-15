@@ -1807,6 +1807,9 @@ struct qwz_txmgmt_queue {
 
 struct qwz_vif {
 	uint32_t vdev_id;
+#ifdef __APPLE__
+	uint8_t vdev_addr[IEEE80211_ADDR_LEN];	/* address the vdev was created with */
+#endif
 	enum wmi_vdev_type vdev_type;
 	enum wmi_vdev_subtype vdev_subtype;
 	uint32_t beacon_interval;

@@ -275,6 +275,22 @@ qwz_init(struct ifnet *ifp)
 	struct ieee80211com *ic = &sc->sc_ic;
 	int s = splnet();
 
+#ifdef __APPLE__
+	/*
+	 * macOS may change the interface address (private Wi-Fi address per
+	 * network) after the vdev was created, and qwz cannot delete a vdev.
+	 * Restart the firmware so the full init below recreates it with the
+	 * current address; otherwise the AP talks to an address the firmware
+	 * never listens on (association works, DHCP never answers).
+	 */
+	if (sc->fw_initialized && (ifp->if_flags & IFF_UP) &&
+	    sc->num_created_vdevs > 0 &&
+	    !IEEE80211_ADDR_EQ(sc->sc_vif.vdev_addr, ic->ic_myaddr)) {
+		printf("%s: address changed to %s: restarting the firmware\n",
+		    sc->sc_dev.dv_xname, ether_sprintf(ic->ic_myaddr));
+		qwz_core_deinit(sc);
+	}
+#endif
 	/* Firmware stays running across ifconfig down/up; only re-scan. */
 	if (sc->fw_initialized) {
 		if (!TAILQ_EMPTY(&sc->peers) || sc->num_started_vdevs > 0) {
@@ -22359,6 +22375,9 @@ qwz_mac_op_add_interface(struct qwz_pdev *pdev)
 		goto err;
 	}
 
+#ifdef __APPLE__
+	IEEE80211_ADDR_COPY(arvif->vdev_addr, ic->ic_myaddr);
+#endif
 	sc->num_created_vdevs++;
 	DNPRINTF(QWZ_D_MAC, "%s: vdev %s created, vdev_id %d\n", __func__,
 	    ether_sprintf(ic->ic_myaddr), arvif->vdev_id);
