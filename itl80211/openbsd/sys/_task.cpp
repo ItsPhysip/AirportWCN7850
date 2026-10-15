@@ -81,10 +81,12 @@ taskq_run(thread_call_param_t p0, thread_call_param_t)
         work = *next;   /* copy: the owner may re-add or free it while it runs */
         IOLockUnlock(tq->tq_mtx);
 
+        qwz_log("qwz: trace: task %s enter\n", work.name);
         if (_fCommandGate != NULL)
             _fCommandGate->runAction(taskq_run_gated, &work);
         else
             (*work.t_func)(work.t_arg);
+        qwz_log("qwz: trace: task %s exit\n", work.name);
     }
 }
 

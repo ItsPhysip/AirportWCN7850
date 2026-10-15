@@ -428,7 +428,10 @@ public:
 	action(OSObject *owner, IOInterruptEventSource *, int)
 	{
 		QwzIntr *ih = (QwzIntr *)owner;
-		ih->fn(ih->arg);
+		int r;
+		qwz_log("qwz: trace: intr action enter\n");
+		r = ih->fn(ih->arg);
+		qwz_log("qwz: trace: intr action exit (%d)\n", r);
 	}
 };
 OSDefineMetaClassAndStructors(QwzIntr, OSObject)

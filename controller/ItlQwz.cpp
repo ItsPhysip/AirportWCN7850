@@ -183,7 +183,9 @@ ItlQwz::attach(IOPCIDevice *device)
 	if (ret != kIOReturnSuccess)
 		return false;
 
+	QWZLOG("trace: sc %p", sc);
 	ifp = &sc->sc_ic.ic_if;
+	QWZLOG("trace: ifp %p if_start %p if_watchdog %p", ifp, ifp->if_start, ifp->if_watchdog);
 	qwz_if_start = ifp->if_start;
 	qwz_if_watchdog = ifp->if_watchdog;
 	ifp->if_start = qwz_if_start_wrapper;
