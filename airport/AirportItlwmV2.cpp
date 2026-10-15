@@ -13,6 +13,7 @@
 #include <net80211/ieee80211_var.h>
 
 #include "AirportItlwmSkywalkInterface.hpp"
+#include "qwz_log.h"
 #include "IOPCIEDeviceWrapper.hpp"
 
 #define super IO80211Controller
@@ -300,26 +301,32 @@ bool AirportItlwm::start(IOService *provider)
     setProperty("built-in", OSData::withBytes(&builtIn, sizeof(builtIn)));
     setProperty("DriverKitDriver", kOSBooleanFalse);
 #ifdef AIRPORT_WCL
+    qwz_log("qwz: trace: AirportItlwm::start: initCCLogs\n");
     if (!initCCLogs()) {
         releaseAll();
         return false;
     }
 #endif
+    qwz_log("qwz: trace: AirportItlwm::start: IO80211Controller::start\n");
     if (!super::start(provider)) {
 #ifdef AIRPORT_WCL
         releaseAll();
 #endif
         return false;
     }
+    qwz_log("qwz: trace: AirportItlwm::start: super started; PCI enables\n");
     pciNub->setBusMasterEnable(true);
     pciNub->setIOEnable(true);
     pciNub->setMemoryEnable(true);
-    pciNub->configWrite8(0x41, 0);
+    /* QwzMac: MSI only; never let the card fall back to its INTx line. */
+    pciNub->configWrite16(kIOPCIConfigCommand,
+        pciNub->configRead16(kIOPCIConfigCommand) | 0x0400);
     if (pciNub->requestPowerDomainState(kIOPMPowerOn,
                                         (IOPowerConnection *) getParentEntry(gIOPowerPlane), IOPMLowestState) != IOPMNoErr) {
         super::stop(provider);
         return false;
     }
+    qwz_log("qwz: trace: AirportItlwm::start: initPCIPowerManagment\n");
     if (initPCIPowerManagment(pciNub) == false) {
         super::stop(pciNub);
         return false;
@@ -330,6 +337,7 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
+    qwz_log("qwz: trace: AirportItlwm::start: command gate\n");
     _fCommandGate = IOCommandGate::commandGate(this, (IOCommandGate::Action)AirportItlwm::tsleepHandler);
     if (_fCommandGate == 0) {
         XYLog("No command gate!!\n");
@@ -345,6 +353,7 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
+    qwz_log("qwz: trace: AirportItlwm::start: initWithController\n");
     fHalService->initWithController(this, _fWorkloop, _fCommandGate);
     fHalService->get80211Controller()->ic_event_handler = eventHandler;
 
@@ -359,12 +368,16 @@ bool AirportItlwm::start(IOService *provider)
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_HEON;
 #endif
 
+    qwz_log("qwz: trace: AirportItlwm::start: HAL attach\n");
     if (!fHalService->attach(pciNub)) {
-        XYLog("attach fail\n");
+        qwz_log("qwz: trace: AirportItlwm::start: HAL attach failed; stopping\n");
         super::stop(pciNub);
+        qwz_log("qwz: trace: AirportItlwm::start: super stopped; releaseAll\n");
         releaseAll();
+        qwz_log("qwz: trace: AirportItlwm::start: released\n");
         return false;
     }
+    qwz_log("qwz: trace: AirportItlwm::start: HAL attached; watchdog\n");
     fWatchdogWorkLoop = IOWorkLoop::workLoop();
     if (fWatchdogWorkLoop == NULL) {
         XYLog("init watchdog workloop fail\n");
@@ -394,6 +407,7 @@ bool AirportItlwm::start(IOService *provider)
 #endif
     scanSource->enable();
 
+    qwz_log("qwz: trace: AirportItlwm::start: new AirportItlwmSkywalkInterface\n");
     fNetIf = new AirportItlwmSkywalkInterface;
 #ifdef AIRPORT_WCL
     if (!fNetIf || !static_cast<AirportItlwmSkywalkInterface *>(fNetIf)->init(this)) {
@@ -405,6 +419,7 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
+    qwz_log("qwz: trace: AirportItlwm::start: interface init done; setInterfaceRole\n");
     fNetIf->setInterfaceRole(1);
     checkInterfaceRole("after setInterfaceRole", false);
     fNetIf->setInterfaceId(1);
@@ -424,12 +439,14 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
+    qwz_log("qwz: trace: AirportItlwm::start: attachInterface\n");
     if (!attachInterface(fNetIf, this)) {
         XYLog("attach to interface fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
+    qwz_log("qwz: trace: AirportItlwm::start: attach bsd interface\n");
     if (!IONetworkController::attachInterface((IONetworkInterface **)&bsdInterface,
 #ifdef AIRPORT_WCL
                                              false
@@ -489,6 +506,7 @@ bool AirportItlwm::start(IOService *provider)
     if (TAILQ_EMPTY(&fHalService->get80211Controller()->ic_ess))
         fHalService->get80211Controller()->ic_flags |= IEEE80211_F_AUTO_JOIN;
 #ifdef AIRPORT_WCL
+    qwz_log("qwz: trace: AirportItlwm::start: registerService\n");
     bsdInterface->registerService();
 #endif
     registerService();

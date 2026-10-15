@@ -42,6 +42,9 @@ args=$($PB -c "Print $KEY" "$CFG" | tr ' ' '\n' | grep -v '^qwz_stage=' | { [ -n
 # QWZ_PANIC=1 keeps the kernel on the panic screen (debug=0x144) instead of rebooting; QWZ_PANIC=0 restores debug=0x100.
 [ "${QWZ_PANIC:-}" = 1 ] && args=$(echo "$args" | sed 's/debug=0x100/debug=0x144/')
 [ "${QWZ_PANIC:-}" = 0 ] && args=$(echo "$args" | sed 's/debug=0x144/debug=0x100/')
+# QWZ_AIRPORT_DELAY=<s> sets qwz_airport_delay=<s> (AirportQwz starts its Wi-Fi layer <s> seconds after boot, logging to the file); 0 removes it.
+args=$(echo "$args" | tr ' ' '\n' | grep -v '^qwz_airport_delay=' | tr '\n' ' ')
+[ -n "${QWZ_AIRPORT_DELAY:-}" ] && [ "${QWZ_AIRPORT_DELAY}" != 0 ] && args="${args}qwz_airport_delay=$QWZ_AIRPORT_DELAY "
 # QWZ_OFF=1 adds -qwzoff (the driver refuses to match); QWZ_OFF=0 removes it.
 [ "${QWZ_OFF:-}" = 1 ] && args="-qwzoff ${args}"
 [ "${QWZ_OFF:-}" = 0 ] && args=$(echo "$args" | sed 's/-qwzoff //')

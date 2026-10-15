@@ -8,6 +8,8 @@
 
 #include "IOPCIEDeviceWrapper.hpp"
 #include "qwz_log.h"
+#include <kern/thread_call.h>
+#include <kern/clock.h>
 #include "Apple80211.h"
 
 #include "ItlQwz.hpp"
@@ -86,8 +88,7 @@ probe(IOService *provider, SInt32 *score)
         if (msixCap)
             pciMsiXClearAndSet(device, msixCap, PCI_MSIX_FLAGS_ENABLE, 0);
         device->findPCICapability(PCI_CAP_ID_MSI, &msiCap);
-        if (msiCap)
-            pciMsiSetEnable(device, msiCap, 1);
+        /* QwzMac: MSI is enabled by IOPCIFamily when the interrupt is registered. */
         if (!msiCap && !msixCap) {
             XYLog("%s No MSI cap\n", __FUNCTION__);
             fHalService->release();
@@ -119,8 +120,38 @@ start(IOService *provider)
         logTimer->setTimeoutMS(500);
     else
         OSSafeReleaseNULL(logTimer);
+    /*
+     * QwzMac: qwz_airport_delay=<s> (boot-arg) holds the Wi-Fi layer back
+     * for <s> seconds after boot, with every log line also synced to
+     * QWZ_LOG_FILE, so a crash in AirportItlwm::start leaves its last step
+     * in the file instead of restarting the machine before any display.
+     */
+    uint32_t delay = 0;
+    PE_parse_boot_argn("qwz_airport_delay", &delay, sizeof(delay));
+    if (delay > 0) {
+        thread_call_t tc = thread_call_allocate(&IOPCIEDeviceWrapper::delayedRegister, this);
+        if (tc != NULL) {
+            uint64_t deadline;
+            qwz_log("qwz: AirportQwz: Wi-Fi layer start delayed by %u s\n", delay);
+            retain();
+            clock_interval_to_deadline(delay, kSecondScale, &deadline);
+            thread_call_enter_delayed(tc, deadline);
+            return true;
+        }
+    }
     registerService();
     return true;
+}
+
+void IOPCIEDeviceWrapper::
+delayedRegister(thread_call_param_t owner, thread_call_param_t)
+{
+    IOPCIEDeviceWrapper *self = (IOPCIEDeviceWrapper *)owner;
+
+    qwz_log_file_begin();
+    qwz_log("qwz: ==== AirportQwz: registering the PCI wrapper (Wi-Fi layer matches now) ====\n");
+    self->registerService();
+    self->release();
 }
 
 void IOPCIEDeviceWrapper::

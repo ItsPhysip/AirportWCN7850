@@ -43,6 +43,7 @@ private:
     IOTimerEventSource *logTimer;
     void publishLog();
     static void logTimerFired(OSObject *owner, IOTimerEventSource *sender);
+    static void delayedRegister(thread_call_param_t owner, thread_call_param_t);
 };
 
 #endif /* IOPCIEDeviceWrapper_hpp */
