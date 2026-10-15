@@ -36,9 +36,7 @@ void CTimeout::timeoutOccurred(OSObject* owner, IOTimerEventSource* timer)
     }
     //callback
     tm->isPending = false;
-    qwz_log("qwz: trace: timeout %p enter (fn %p)\n", tm, tm->to_func);
     tm->to_func(tm->to_arg);
-    qwz_log("qwz: trace: timeout %p exit\n", tm);
 }
 
 IOReturn CTimeout::timeout_add_msec(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)

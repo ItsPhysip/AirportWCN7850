@@ -374,6 +374,7 @@ bool itlwm::start(IOService *provider)
 }
 
 extern int qwz_stage_sysctl;	/* qwz/qwz_compat.cpp */
+static int qwz_logfile_on;	/* debug.qwz.logfile: file sink kept open */
 
 bool itlwm::requestBringUp()
 {
@@ -408,7 +409,8 @@ void itlwm::startThreadCall(thread_call_param_t owner, thread_call_param_t)
             "bring-up failed; the driver stays idle, start again to retry");
     }
     qwz_log("qwz: thread call done\n");
-    qwz_log_file_end();
+    if (!qwz_logfile_on)
+        qwz_log_file_end();
     that->release();
 }
 
@@ -445,6 +447,42 @@ SYSCTL_UINT(_debug_qwz, OID_AUTO, debug, CTLFLAG_RW | CTLFLAG_LOCKED,
     &qwz_debug, 0, "qwz debug mask (QWZ_D_* in qwzvar.h)");
 #endif
 
+static int
+qwz_sysctl_publish(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+    int v = 0;
+    int err = sysctl_handle_int(oidp, &v, 0, req);
+
+    if (err || req->newptr == USER_ADDR_NULL)
+        return err;
+    qwz_log_publish();	/* refresh QwzMacLog in the I/O Registry */
+    return 0;
+}
+
+static int
+qwz_sysctl_logfile(struct sysctl_oid *oidp, void *arg1, int arg2, struct sysctl_req *req)
+{
+    int v = qwz_logfile_on;
+    int err = sysctl_handle_int(oidp, &v, 0, req);
+
+    if (err || req->newptr == USER_ADDR_NULL)
+        return err;
+    if (v && !qwz_logfile_on) {
+        qwz_log_file_begin();
+        qwz_log("qwz: ==== file log on (sysctl) ====\n");
+    } else if (!v && qwz_logfile_on) {
+        qwz_log("qwz: ==== file log off (sysctl) ====\n");
+        qwz_log_file_end();
+    }
+    qwz_logfile_on = v ? 1 : 0;
+    return 0;
+}
+
+SYSCTL_PROC(_debug_qwz, OID_AUTO, publish, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, 0, qwz_sysctl_publish, "I", "write 1 to republish the log ring as QwzMacLog");
+SYSCTL_PROC(_debug_qwz, OID_AUTO, logfile, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, 0, qwz_sysctl_logfile, "I", "1: every log line also goes to " QWZ_LOG_FILE);
+
 static bool qwz_sysctl_registered;
 
 void qwz_sysctl_register(itlwm *owner)
@@ -455,6 +493,8 @@ void qwz_sysctl_register(itlwm *owner)
     sysctl_register_oid(&sysctl__debug_qwz);
     sysctl_register_oid(&sysctl__debug_qwz_start);
     sysctl_register_oid(&sysctl__debug_qwz_stage);
+    sysctl_register_oid(&sysctl__debug_qwz_publish);
+    sysctl_register_oid(&sysctl__debug_qwz_logfile);
 #ifdef QWZ_DEBUG
     sysctl_register_oid(&sysctl__debug_qwz_debug);
 #endif
@@ -469,6 +509,8 @@ void qwz_sysctl_unregister(void)
 #ifdef QWZ_DEBUG
     sysctl_unregister_oid(&sysctl__debug_qwz_debug);
 #endif
+    sysctl_unregister_oid(&sysctl__debug_qwz_logfile);
+    sysctl_unregister_oid(&sysctl__debug_qwz_publish);
     sysctl_unregister_oid(&sysctl__debug_qwz_stage);
     sysctl_unregister_oid(&sysctl__debug_qwz_start);
     sysctl_unregister_oid(&sysctl__debug_qwz);
