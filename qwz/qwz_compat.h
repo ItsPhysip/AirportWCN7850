@@ -454,6 +454,8 @@ int	loadfirmware(const char *, u_char **, size_t *);
  * freezes the machine can be stopped just before the step that does it.
  */
 int	qwz_stage_ok(int, const char *);
+/* Logs len bytes at p, 16 per line, labelled with offsets starting at base. */
+void	qwz_hexdump(const char *, const void *, size_t, size_t);
 int	qwz_stage_hit_limit(void);	/* a checkpoint was refused by the limit */
 void	qwz_stage_reset(void);		/* clear that flag before a new attempt */
 

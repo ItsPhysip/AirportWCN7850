@@ -9565,6 +9565,16 @@ qwz_wmi_tlv_iter(struct qwz_softc *sc, const void *ptr, size_t len,
 			printf("%s: wmi tlv parse failure of tag %u "
 			    "at byte %zd (%zu bytes left, %u expected)\n",
 			    __func__, tlv_tag, (const uint8_t *)ptr - (const uint8_t *)begin, len, tlv_len);
+#ifdef __APPLE__
+			{
+				size_t off = (const uint8_t *)ptr - (const uint8_t *)begin;
+				size_t total = off + len;
+				size_t from = off > 96 ? off - 96 : 0;
+				qwz_hexdump("wmi start", begin, total < 64 ? total : 64, 0);
+				qwz_hexdump("wmi around failure", (const uint8_t *)begin + from,
+				    (total - from) < 192 ? (total - from) : 192, from);
+			}
+#endif
 			return EINVAL;
 		}
 
@@ -21187,6 +21197,8 @@ qwz_ce_recv_process_cb(struct qwz_ce_pipe *pipe)
 		rx_data->m = NULL;
 
 		max_nbytes = M_PKTLEN(m);
+		DNPRINTF(QWZ_D_CE, "%s: pipe %d completion %u bytes (buffer %u)\n",
+		    __func__, pipe->pipe_num, nbytes, max_nbytes);
 		if (nbytes == 0 || max_nbytes < nbytes) {
 			ifp->if_ierrors++;
 			m_freem(m);

@@ -816,6 +816,23 @@ qwz_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t off, bus_size_
 				memcpy((uint8_t *)mbuf_data(map->_mbuf) + off, bounce, len);
 			else
 				mbuf_copyback(map->_mbuf, off, len, bounce, MBUF_DONTWAIT);
+#ifdef QWZ_DEBUG
+			/* Diagnostic: the mbuf must now match what the device wrote. */
+			{
+				uint8_t chk[64];
+				size_t o;
+				for (o = 0; o < len; o += sizeof(chk)) {
+					size_t n = len - o < sizeof(chk) ? len - o : sizeof(chk);
+					mbuf_copydata(map->_mbuf, off + o, n, chk);
+					if (memcmp(chk, bounce + o, n) != 0) {
+						QWZLOG("bounce copy-out MISMATCH at %zu of %zu (mbuf len %zu, chain %d)",
+						    (size_t)(off + o), (size_t)len, (size_t)mbuf_len(map->_mbuf),
+						    mbuf_next(map->_mbuf) != NULL);
+						break;
+					}
+				}
+			}
+#endif
 		} else {
 			memcpy((uint8_t *)map->_kva + off, bounce, len);
 		}
@@ -1030,6 +1047,23 @@ qwz_compat_publish_blob(const char *key, const void *buf, size_t len)
 	d->release();
 	QWZLOG("published %zu bytes as IORegistry property %s", len, key);
 	return 0;
+}
+
+void
+qwz_hexdump(const char *label, const void *p, size_t len, size_t base)
+{
+	const uint8_t *b = (const uint8_t *)p;
+	char line[16 * 3 + 1];
+	size_t i, j;
+
+	QWZLOG("hexdump %s: %zu bytes", label, len);
+	for (i = 0; i < len; i += 16) {
+		size_t n = len - i < 16 ? len - i : 16;
+		for (j = 0; j < n; j++)
+			snprintf(line + j * 3, 4, "%02x ", b[i + j]);
+		line[n * 3] = 0;
+		QWZLOG("  %04zx: %s", base + i, line);
+	}
 }
 
 /* ---- bring-up checkpoints ------------------------------------------------ */
