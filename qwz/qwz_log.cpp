@@ -10,6 +10,7 @@
 #include <IOKit/IOService.h>
 #include <libkern/c++/OSString.h>
 #include <kern/clock.h>
+#include <pexpert/pexpert.h>
 #include <kern/thread.h>
 #include <sys/vnode.h>
 #include <sys/uio.h>
@@ -88,6 +89,18 @@ qwz_log_file_end(void)
 	qwz_log_ctx = NULL;
 }
 
+static int
+qwz_log_console(void)
+{
+	static int console = -1;
+
+	if (console < 0) {
+		int v = 0;
+		console = PE_parse_boot_argn("qwz_console", &v, sizeof(v)) && v ? 1 : 0;
+	}
+	return console;
+}
+
 int
 qwz_vlog(const char *fmt, va_list ap)
 {
@@ -108,7 +121,14 @@ qwz_vlog(const char *fmt, va_list ap)
 	len += head;
 	if ((size_t)len >= sizeof(line))
 		len = sizeof(line) - 1;
-	IOLog("%s", line);
+	/*
+	 * The console (IOLog) is the slow path during a verbose boot: ~60 ms a
+	 * line, enough to make firmware events miss their timeouts when a
+	 * debug mask is set. Lines reach it only when qwz_console=1 is given;
+	 * the ring (QwzMacLog) and the file keep everything.
+	 */
+	if (qwz_log_console())
+		IOLog("%s", line);
 	qwz_log_file_write(line, len);
 
 	/* Concurrent writers reserve disjoint ranges, so lines never interleave. */
