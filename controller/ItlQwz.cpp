@@ -80,9 +80,16 @@ ItlQwz::qwz_match(IOPCIDevice *device)
 }
 
 IOReturn
-ItlQwz::attachGated(OSObject *owner, void *arg0, void *, void *, void *)
+/*
+ * IOCommandGate::runAction() passes the gate's OWNER (the itlwm controller)
+ * as the first argument, not the HAL. The HAL is passed explicitly in arg1.
+ * Casting owner to ItlQwz wrote sc into the controller object and left the
+ * HAL's own sc NULL: the attach "succeeded" and the next line dereferenced
+ * NULL, a panic that looks like a hard freeze with the NVIDIA driver.
+ */
+ItlQwz::attachGated(OSObject *, void *arg0, void *arg1, void *, void *)
 {
-	ItlQwz *that = (ItlQwz *)owner;
+	ItlQwz *that = (ItlQwz *)arg1;
 	struct pci_attach_args *pa = (struct pci_attach_args *)arg0;
 	int err;
 
@@ -187,7 +194,7 @@ ItlQwz::attach(IOPCIDevice *device)
 	 */
 	if (!qwz_stage_ok(3, "take the command gate (runAction)"))
 		return false;
-	ret = qwz_hal_gate->runAction(attachGated, &pa);
+	ret = qwz_hal_gate->runAction(attachGated, &pa, this);
 	QWZLOG("trace: attachGated returned 0x%x (gate released)", ret);
 	if (ret != kIOReturnSuccess)
 		return false;
@@ -207,9 +214,9 @@ ItlQwz::attach(IOPCIDevice *device)
 }
 
 IOReturn
-ItlQwz::detachGated(OSObject *owner, void *, void *, void *, void *)
+ItlQwz::detachGated(OSObject *, void *arg0, void *, void *, void *)
 {
-	ItlQwz *that = (ItlQwz *)owner;
+	ItlQwz *that = (ItlQwz *)arg0;	/* runAction's owner is the controller */
 
 	if (that->sc != NULL) {
 		qwz_pci_macos_detach(that->sc);
@@ -222,7 +229,7 @@ void
 ItlQwz::detach(IOPCIDevice *device)
 {
 	if (qwz_hal_gate != NULL)
-		qwz_hal_gate->runAction(detachGated);
+		qwz_hal_gate->runAction(detachGated, this);
 	qwz_compat_fini();
 }
 
@@ -233,9 +240,9 @@ ItlQwz::free()
 }
 
 IOReturn
-ItlQwz::enableGated(OSObject *owner, void *, void *, void *, void *)
+ItlQwz::enableGated(OSObject *, void *arg0, void *, void *, void *)
 {
-	ItlQwz *that = (ItlQwz *)owner;
+	ItlQwz *that = (ItlQwz *)arg0;	/* runAction's owner is the controller */
 	struct _ifnet *ifp = &that->sc->sc_ic.ic_if;
 	int err = 0;
 
@@ -253,13 +260,13 @@ ItlQwz::enableGated(OSObject *owner, void *, void *, void *, void *)
 IOReturn
 ItlQwz::enable(IONetworkInterface *netif)
 {
-	return sc ? qwz_hal_gate->runAction(enableGated) : kIOReturnNotReady;
+	return sc ? qwz_hal_gate->runAction(enableGated, this) : kIOReturnNotReady;
 }
 
 IOReturn
-ItlQwz::disableGated(OSObject *owner, void *, void *, void *, void *)
+ItlQwz::disableGated(OSObject *, void *arg0, void *, void *, void *)
 {
-	ItlQwz *that = (ItlQwz *)owner;
+	ItlQwz *that = (ItlQwz *)arg0;	/* runAction's owner is the controller */
 	struct _ifnet *ifp = &that->sc->sc_ic.ic_if;
 
 	rw_enter_write(&that->sc->ioctl_rwl);
@@ -273,7 +280,7 @@ ItlQwz::disableGated(OSObject *owner, void *, void *, void *, void *)
 IOReturn
 ItlQwz::disable(IONetworkInterface *netif)
 {
-	return sc ? qwz_hal_gate->runAction(disableGated) : kIOReturnNotReady;
+	return sc ? qwz_hal_gate->runAction(disableGated, this) : kIOReturnNotReady;
 }
 
 struct ieee80211com *

@@ -107,10 +107,11 @@ IOReturn ItlNetworkUserClient::externalMethod(uint32_t selector, IOExternalMetho
 IOReturn ItlNetworkUserClient::externalMethodGated(OSObject *owner, void *arg0,
     void *arg1, void *arg2, void *arg3)
 {
-    ItlNetworkUserClient *that = (ItlNetworkUserClient *)owner;
-    uint32_t selector = (uint32_t)(uintptr_t)arg0;
+    /* owner is the gate's owner (the controller); the client is arg0. */
+    ItlNetworkUserClient *that = (ItlNetworkUserClient *)arg0;
+    uint32_t selector = (uint32_t)(uintptr_t)arg1;
 
-    return sMethods[selector](that, arg1, (bool)(uintptr_t)arg2);
+    return sMethods[selector](that, arg2, (bool)(uintptr_t)arg3);
 }
 
 IOReturn ItlNetworkUserClient::
