@@ -55,6 +55,7 @@
  */
 
 #include "qwz_compat.h"	/* macOS: replaces the OpenBSD kernel headers */
+#define QWZ_TRACE(fmt, ...)	qwz_log("qwz: trace: " fmt "\n", ##__VA_ARGS__)
 
 /* XXX linux porting goo */
 #ifdef __LP64__
@@ -18846,11 +18847,16 @@ qwz_core_stop(struct qwz_softc *sc)
 	    !test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) &&
 	    !test_bit(ATH12K_FLAG_QMI_FAIL, sc->sc_flags))
 		qwz_qmi_firmware_stop(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_qmi_firmware_stop(sc)");
 
 	qwz_power_down(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_power_down(sc)");
 	sc->ops.stop(sc);
+	QWZ_TRACE("%s: after %s", __func__, "sc->ops.stop(sc)");
 	qwz_wmi_detach(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_wmi_detach(sc)");
 	qwz_dp_pdev_reo_cleanup(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_dp_pdev_reo_cleanup(sc)");
 }
 
 void
@@ -18919,23 +18925,30 @@ qwz_core_deinit(struct qwz_softc *sc)
 	mutex_lock(&ab->core_lock);
 #endif
 	sc->ops.irq_disable(sc);
+	QWZ_TRACE("%s: after %s", __func__, "sc->ops.irq_disable(sc)");
 
 	qwz_core_stop(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_core_stop(sc)");
 	qwz_core_pdev_destroy(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_core_pdev_destroy(sc)");
 #ifdef notyet
 	mutex_unlock(&ab->core_lock);
 #endif
 	qwz_vif_purge(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_vif_purge(sc)");
 	qwz_free_peers(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_free_peers(sc)");
 #if 0
 	ath12k_mac_destroy(ab);
 	ath12k_debugfs_soc_destroy(ab);
 #endif
 	qwz_dp_free(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_dp_free(sc)");
 #if 0
 	ath12k_reg_free(ab);
 #endif
 	qwz_qmi_deinit_service(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_qmi_deinit_service(sc)");
 
 	hal->num_shadow_reg_configured = 0;
 
@@ -25086,11 +25099,13 @@ qwz_attach(struct qwz_softc *sc)
 	sc->bss_peer_id = HAL_INVALID_PEERID;
 
 	error = qwz_init(ifp);
+	QWZ_TRACE("%s: after %s", __func__, "error = qwz_init(ifp)");
 	if (error)
 		return;
 
 	/* Turn device off until interface comes up. */
 	qwz_core_deinit(sc);
+	QWZ_TRACE("%s: after %s", __func__, "qwz_core_deinit(sc)");
 }
 
 void

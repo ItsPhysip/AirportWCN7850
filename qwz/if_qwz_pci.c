@@ -51,6 +51,7 @@
  */
 
 #include "qwz_compat.h"	/* macOS: replaces the OpenBSD kernel headers */
+#define QWZ_TRACE(fmt, ...)	qwz_log("qwz: trace: " fmt "\n", ##__VA_ARGS__)
 
 /* XXX linux porting goo */
 #ifdef __LP64__
@@ -2452,6 +2453,7 @@ qwz_pci_power_down(struct qwz_softc *sc)
 		xfer->m = NULL;
 	}
 	ring->queued = 0;
+	QWZ_TRACE("%s: done", __func__);
 }
 
 void
