@@ -25103,9 +25103,19 @@ qwz_attach(struct qwz_softc *sc)
 	if (error)
 		return;
 
+#ifdef __APPLE__
+	/*
+	 * Keep the firmware running, as Linux ath12k does after probe;
+	 * qwz_init() then only rescans when the interface comes up. Powering
+	 * the chip down here and leaving it idle froze the machine as soon as
+	 * the attach released the command gate.
+	 */
+	sc->ops.irq_disable(sc);
+	QWZ_TRACE("%s: firmware left running, interrupts off until the interface is up", __func__);
+#else
 	/* Turn device off until interface comes up. */
 	qwz_core_deinit(sc);
-	QWZ_TRACE("%s: after %s", __func__, "qwz_core_deinit(sc)");
+#endif
 }
 
 void
