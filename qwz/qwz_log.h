@@ -18,6 +18,8 @@
 class IOService;
 
 int	qwz_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/* As qwz_log, but always on the console too (shutdown steps: the screen is the only log left). */
+int	qwz_logc(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 int	qwz_vlog(const char *fmt, va_list ap) __attribute__((format(printf, 1, 0)));
 
 /* Where QwzMacLog/QwzMacStage are published: the WCN7850's IOPCIDevice. */

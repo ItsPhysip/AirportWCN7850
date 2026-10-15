@@ -139,6 +139,25 @@ qwz_vlog(const char *fmt, va_list ap)
 }
 
 int
+qwz_logc(const char *fmt, ...)
+{
+	va_list ap;
+	char line[384];
+	int r;
+
+	va_start(ap, fmt);
+	r = qwz_vlog(fmt, ap);
+	va_end(ap);
+	if (!qwz_log_console()) {
+		va_start(ap, fmt);
+		vsnprintf(line, sizeof(line), fmt, ap);
+		va_end(ap);
+		IOLog("%s", line);
+	}
+	return r;
+}
+
+int
 qwz_log(const char *fmt, ...)
 {
 	va_list ap;

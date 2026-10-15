@@ -529,44 +529,43 @@ void AirportItlwm::systemWillShutdown(IOOptionBits specifier)
 {
     if ((specifier == kIOMessageSystemWillPowerOff ||
          specifier == kIOMessageSystemWillRestart) && fHalService != NULL) {
-        qwz_log_file_begin();	/* the root fs is still writable here */
-        qwz_log("qwz: ==== system shutdown (0x%x): turning the radio off ====\n", (unsigned)specifier);
+        qwz_logc("qwz: ==== system shutdown (0x%x): turning the radio off ====\n", (unsigned)specifier);
         fHalService->shutdownHardware();
-        qwz_log("qwz: shutdown: radio off; calling super\n");
+        qwz_logc("qwz: shutdown: radio off; calling super\n");
     }
     super::systemWillShutdown(specifier);
-    qwz_log("qwz: shutdown: super::systemWillShutdown returned\n");
+    qwz_logc("qwz: shutdown: super::systemWillShutdown returned\n");
 }
 
 void AirportItlwm::stop(IOService *provider)
 {
-    qwz_log("qwz: stop: enter\n");
+    qwz_logc("qwz: stop: enter\n");
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     if (roleTimer) {
         roleTimer->cancelTimeout();
         _fWorkloop->removeEventSource(roleTimer);
         OSSafeReleaseNULL(roleTimer);
     }
-    qwz_log("qwz: stop: role timer gone; stopWCL\n");
+    qwz_logc("qwz: stop: role timer gone; stopWCL\n");
 #ifdef AIRPORT_WCL
     if (fNetIf)
         static_cast<AirportItlwmSkywalkInterface *>(fNetIf)->stopWCL();
 #endif
-    qwz_log("qwz: stop: super::stop\n");
+    qwz_logc("qwz: stop: super::stop\n");
     super::stop(provider);
-    qwz_log("qwz: stop: disableAdapter\n");
+    qwz_logc("qwz: stop: disableAdapter\n");
     disableAdapter(bsdInterface);
     setLinkStatus(kIONetworkLinkValid);
-    qwz_log("qwz: stop: HAL detach\n");
+    qwz_logc("qwz: stop: HAL detach\n");
     fHalService->detach(pciNub);
-    qwz_log("qwz: stop: ether_ifdetach\n");
+    qwz_logc("qwz: stop: ether_ifdetach\n");
     ether_ifdetach(ifp);
-    qwz_log("qwz: stop: detachInterface\n");
+    qwz_logc("qwz: stop: detachInterface\n");
     detachInterface(fNetIf, true);
     OSSafeReleaseNULL(fNetIf);
-    qwz_log("qwz: stop: releaseAll\n");
+    qwz_logc("qwz: stop: releaseAll\n");
     releaseAll();
-    qwz_log("qwz: stop: done\n");
+    qwz_logc("qwz: stop: done\n");
 }
 
 void AirportItlwm::free()
@@ -1409,10 +1408,12 @@ IOReturn AirportItlwm::registerWithPolicyMaker(IOService *policyMaker)
 
 void AirportItlwm::setPowerStateOff()
 {
-    XYLog("%s\n", __FUNCTION__);
+    qwz_logc("qwz: pm: power off: disabling the adapter\n");
     pmPowerState = kPowerStateOff;
     disableAdapter(bsdInterface);
+    qwz_logc("qwz: pm: power off: adapter disabled; acknowledging\n");
     pmPolicyMaker->acknowledgeSetPowerState();
+    qwz_logc("qwz: pm: power off done\n");
 }
 
 void AirportItlwm::setPowerStateOn()

@@ -210,17 +210,17 @@ ItlQwz::shutdownGated(OSObject *, void *arg0, void *, void *, void *)
 	if (!that->attached || that->shutdown)
 		return kIOReturnSuccess;
 	ifp = &that->sc->sc_ic.ic_if;
-	QWZLOG("shutdown: stopping the interface");
+	qwz_logc("qwz: shutdown: stopping the interface\n");
 	rw_enter_write(&that->sc->ioctl_rwl);
 	ifp->if_flags &= ~IFF_UP;
 	if (ifp->if_flags & IFF_RUNNING)
 		qwz_stop(ifp);
-	QWZLOG("shutdown: interface stopped; firmware stop + power-down");
+	qwz_logc("qwz: shutdown: interface stopped; firmware stop + power-down\n");
 	if (that->sc->fw_initialized)
 		qwz_core_deinit(that->sc);	/* firmware stop + chip power-down */
 	rw_exit(&that->sc->ioctl_rwl);
 	that->shutdown = true;
-	QWZLOG("chip powered down for system shutdown");
+	qwz_logc("qwz: chip powered down for system shutdown\n");
 	return kIOReturnSuccess;
 }
 
@@ -267,7 +267,7 @@ ItlQwz::enableGated(OSObject *, void *arg0, void *, void *, void *)
 IOReturn
 ItlQwz::enable(IONetworkInterface *netif)
 {
-	return attached ? qwz_hal_gate->runAction(enableGated, this) : kIOReturnNotReady;
+	return (attached && !shutdown) ? qwz_hal_gate->runAction(enableGated, this) : kIOReturnNotReady;
 }
 
 IOReturn
@@ -287,6 +287,8 @@ ItlQwz::disableGated(OSObject *, void *arg0, void *, void *, void *)
 IOReturn
 ItlQwz::disable(IONetworkInterface *netif)
 {
+	if (shutdown)
+		return kIOReturnSuccess;	/* the chip is already off */
 	return attached ? qwz_hal_gate->runAction(disableGated, this) : kIOReturnNotReady;
 }
 
