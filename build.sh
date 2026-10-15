@@ -55,5 +55,16 @@ strip -S "$KEXT/Contents/MacOS/QwzMac"
 for sym in _kmod_info __start __stop __realmain; do
   nm "$KEXT/Contents/MacOS/QwzMac" | grep -q " $sym\$" || { echo "STOP: $sym missing from the kext"; exit 1; }
 done
+# A kext must never define a symbol the kernel exports: every call to it in the
+# kext would bind to ours instead (a macro once turned explicit_bzero into a
+# self-recursive bzero). The kext/kmod entry points are the expected exceptions.
+KERNEL_BIN=/System/Library/Kernels/kernel
+if [ -f "$KERNEL_BIN" ]; then
+  clash=$(comm -12 <(nm -gU "$KEXT/Contents/MacOS/QwzMac" | awk '{print $3}' | sort -u) \
+                   <(nm -gU "$KERNEL_BIN" | awk '{print $3}' | sort -u) \
+          | grep -vE '^(_kmod_info|__start|__stop|__realmain|__antimain|_kext_apple_cc)$' \
+          | grep -vE '^_timingsafe_bcmp$' || true)   # itl80211/openbsd/net80211/_string.c, as in itlwm
+  [ -z "$clash" ] || { echo "STOP: the kext defines kernel symbols: $clash"; exit 1; }
+fi
 sed "s/@VERSION@/$VERSION/g" Info.plist > "$KEXT/Contents/Info.plist"
 echo "QwzMac $VERSION $(shasum -a 256 "$KEXT/Contents/MacOS/QwzMac" | cut -c1-8) $(stat -f %z "$KEXT/Contents/MacOS/QwzMac") B -> $KEXT"

@@ -66,6 +66,13 @@ qwz_free(void *p, int type, size_t sz)
 	IOFree(h, h->size);
 }
 
+/*
+ * itl80211's ieee80211_var.h has "#define explicit_bzero bzero", which
+ * turned this definition into a bzero() that called itself: every bzero()
+ * in the kext bound to it and overflowed the kernel stack (a double fault,
+ * so the machine froze or reset with no panic). Undo the macro here.
+ */
+#undef explicit_bzero
 void
 explicit_bzero(void *p, size_t n)
 {
