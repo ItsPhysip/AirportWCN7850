@@ -26,10 +26,34 @@ BK=~/Documents/EFI-backups/nvme-EFI-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$BK" && cp -R "$mp/EFI/OC/config.plist" "$mp/EFI/OC/Kexts" "$BK/" && echo "backup: $BK"
 rm -rf "$mp/EFI/OC/Kexts/AirportWCN7850.kext" "$mp/EFI/OC/Kexts/AirportQwz.kext" "$mp/EFI/OC/Kexts/QwzMac.kext"
 cp -R "$SRC/AirportWCN7850.kext" "$mp/EFI/OC/Kexts/"
-python3 - "$CFG" <<'PY'
+# QWZ_USBMAP=<dir with USBToolBox.kext and UTBMap.kext> also installs the USB
+# port map (USBToolBox + UTBMap enabled, UTBDefault removed): needed for the
+# Bluetooth half of the chip, which sits on a port the default map hides.
+USBMAP=${QWZ_USBMAP:-}
+if [ -n "$USBMAP" ]; then
+  [ -d "$USBMAP/UTBMap.kext" ] && [ -d "$USBMAP/USBToolBox.kext" ] || { echo "STOP: $USBMAP lacks UTBMap.kext/USBToolBox.kext"; exit 1; }
+  rm -rf "$mp/EFI/OC/Kexts/UTBMap.kext" "$mp/EFI/OC/Kexts/UTBDefault.kext" "$mp/EFI/OC/Kexts/USBToolBox.kext"
+  cp -R "$USBMAP/UTBMap.kext" "$USBMAP/USBToolBox.kext" "$mp/EFI/OC/Kexts/"
+  echo "USB map installed from $USBMAP"
+fi
+python3 - "$CFG" "$USBMAP" <<'PY'
 import plistlib, sys
-cfg = sys.argv[1]
+cfg, usbmap = sys.argv[1], sys.argv[2]
 d = plistlib.load(open(cfg, 'rb'))
+if usbmap:
+    add = []
+    for k in d['Kernel']['Add']:
+        if k['BundlePath'] == 'UTBDefault.kext':
+            continue
+        if k['BundlePath'] == 'USBToolBox.kext':
+            k['Enabled'] = True
+        if k['BundlePath'] == 'UTBMap.kext':
+            continue
+        add.append(k)
+    i = next((n for n, k in enumerate(add) if k['BundlePath'] == 'USBToolBox.kext'), len(add) - 1)
+    add.insert(i + 1, {'Arch': 'Any', 'BundlePath': 'UTBMap.kext', 'Comment': 'USB map (USBToolBox) MSI MAG X870 Tomahawk',
+                       'Enabled': True, 'ExecutablePath': '', 'MaxKernel': '', 'MinKernel': '', 'PlistPath': 'Contents/Info.plist'})
+    d['Kernel']['Add'] = add
 add = [k for k in d['Kernel']['Add'] if k['BundlePath'] not in ('QwzMac.kext', 'AirportQwz.kext', 'AirportWCN7850.kext')]
 add.append({'Arch': 'Any', 'BundlePath': 'AirportWCN7850.kext', 'Comment': 'Qualcomm WCN7850 Wi-Fi (AirportWCN7850)',
             'Enabled': True, 'ExecutablePath': 'Contents/MacOS/AirportWCN7850', 'MaxKernel': '', 'MinKernel': '25.0.0',
