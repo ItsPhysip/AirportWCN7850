@@ -20,4 +20,9 @@ args=$($PB -c "Print $KEY" "$CFG" | tr ' ' '\n' | grep -v '^qwz_stage=' | tr '\n
 $PB -c "Set $KEY ${args}qwz_stage=$N" "$CFG"
 echo "kext $(shasum -a 256 build-debug/QwzMac.kext/Contents/MacOS/QwzMac | cut -c1-8) copied to $vol"
 echo "boot-args: $($PB -c "Print $KEY" "$CFG")"
-diskutil unmount "$vol" >/dev/null && echo "unmounted $part"
+# Spotlight sometimes holds a freshly written volume for a few seconds.
+for i in 1 2 3 4 5; do
+  diskutil unmount "$vol" >/dev/null 2>&1 && { echo "unmounted $part"; exit 0; }
+  sleep 3
+done
+echo "could not unmount $vol; eject it in Finder before rebooting"
