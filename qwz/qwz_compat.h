@@ -397,9 +397,19 @@ m_copydata(mbuf_t m, int off, int len, void *buf)
 {
 	mbuf_copydata(m, off, len, buf);
 }
+/*
+ * OpenBSD's m_pullup() returns the mbuf as is when its first len bytes are
+ * already contiguous. xnu's mbuf_pullup() does not: for a cluster mbuf it
+ * copies the head into a new small mbuf and chains the cluster behind it.
+ * qwz then walked the payload as one buffer (mtod + packet length) and read
+ * past the small mbuf into its neighbour, so every WMI event broke at about
+ * byte 300. Only call xnu when the bytes really are split.
+ */
 static inline mbuf_t
 m_pullup(mbuf_t m, int len)
 {
+	if (m != NULL && (int)mbuf_len(m) >= len)
+		return m;
 	return mbuf_pullup(&m, len) == 0 ? m : NULL;	/* the chain is freed on failure */
 }
 static inline mbuf_t
