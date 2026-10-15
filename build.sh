@@ -11,8 +11,11 @@ VERSION=$(cat VERSION)
 [ -d "$MKSDK/Headers" ] || git clone -q --depth 1 https://github.com/acidanthera/MacKernelSDK "$MKSDK"
 [ -f firmware/FwBinary.cpp ] || { echo "STOP: run scripts/fetch-firmware.sh first"; exit 1; }
 
-OBJ=$OUT/obj; KEXT=$OUT/QwzMac.kext
-mkdir -p "$OBJ" "$KEXT/Contents/MacOS"
+# Two products from one tree:
+#   QwzMac.kext      Ethernet-style interface + HeliPort (controller/)
+#   AirportQwz.kext  native Wi-Fi through Apple's IO80211Family (airport/), macOS 26
+# PRODUCT=QwzMac|AirportQwz|all (default all).
+PRODUCT=${PRODUCT:-all}
 
 COMMON=(-arch x86_64 -mmacosx-version-min=13.0 -fapple-kext -mkernel -nostdinc
   -isystem "$MKSDK/Headers" -isystem itl80211/openbsd -isystem itl80211 -isystem include -iquote itl80211/linux -I qwz -I controller -I firmware
@@ -25,46 +28,65 @@ COMMON=(-arch x86_64 -mmacosx-version-min=13.0 -fapple-kext -mkernel -nostdinc
 # Debug builds use -O0 like an Xcode Debug kext build.
 [ "${DEBUG:-0}" = 1 ] && COMMON+=(-DDEBUG=1 -DQWZ_DEBUG -O0)
 
-SRCS=$(find itl80211 include/HAL controller qwz firmware -name '*.c' -o -name '*.cpp' | sort)
+# build_kext <name> <plist> <obj subdir> <source list> [extra flags...]
+build_kext() {
+  local NAME=$1 PLIST=$2 OBJ=$OUT/obj-$3 SRCS=$4; shift 4
+  local FLAGS=("${COMMON[@]}" "$@")
+  local KEXT=$OUT/$NAME.kext
+  mkdir -p "$OBJ" "$KEXT/Contents/MacOS"
 
-# Compile in parallel; each object keeps its path so same-named files don't clash.
-fail=0; pids=()
-for s in $SRCS; do
-  o=$OBJ/${s//\//_}.o
-  if [ ! -f "$o" ] || [ "$s" -nt "$o" ] || [ -n "$(find qwz include controller itl80211 firmware -name '*.h*' -newer "$o" 2>/dev/null | head -1)" ]; then
-    ( xcrun clang++ "${COMMON[@]}" -c "$s" -o "$o" 2> "$o.log" || { echo "FAIL $s"; exit 1; } ) &
-    pids+=($!)
-    if [ ${#pids[@]} -ge 10 ]; then wait "${pids[0]}" || fail=1; pids=("${pids[@]:1}"); fi
+  # Compile in parallel; each object keeps its path so same-named files don't clash.
+  local fail=0 pids=() s o p l
+  for s in $SRCS; do
+    o=$OBJ/${s//\//_}.o
+    if [ ! -f "$o" ] || [ "$s" -nt "$o" ] || [ -n "$(find qwz include controller airport itl80211 firmware -name '*.h*' -newer "$o" 2>/dev/null | head -1)" ]; then
+      ( xcrun clang++ "${FLAGS[@]}" -c "$s" -o "$o" 2> "$o.log" || { echo "FAIL $s"; exit 1; } ) &
+      pids+=($!)
+      if [ ${#pids[@]} -ge 10 ]; then wait "${pids[0]}" || fail=1; pids=("${pids[@]:1}"); fi
+    fi
+  done
+  for p in ${pids[@]+"${pids[@]}"}; do wait "$p" || fail=1; done
+  if [ $fail = 1 ]; then
+    for l in "$OBJ"/*.log; do [ -s "$l" ] && grep -q 'error:' "$l" && { echo "== $l"; grep -m 20 'error:' "$l"; }; done
+    exit 1
   fi
-done
-for p in ${pids[@]+"${pids[@]}"}; do wait "$p" || fail=1; done
-if [ $fail = 1 ]; then
-  for l in "$OBJ"/*.log; do [ -s "$l" ] && grep -q 'error:' "$l" && { echo "== $l"; grep -m 20 'error:' "$l"; }; done
-  exit 1
-fi
 
-# kmod_info (what Xcode generates for kext targets) must keep C symbol names.
-xcrun clang -arch x86_64 -mmacosx-version-min=13.0 -mkernel -nostdinc -isystem "$MKSDK/Headers" \
-  -DKERNEL -DQWZMAC_VERSION=\"$VERSION\" -x c -c kmod/kmod_info.c -o "$OBJ/kmod_info.o"
+  # kmod_info (what Xcode generates for kext targets) must keep C symbol names.
+  xcrun clang -arch x86_64 -mmacosx-version-min=13.0 -mkernel -nostdinc -isystem "$MKSDK/Headers" \
+    -DKERNEL -DQWZMAC_VERSION=\"$VERSION\" -DQWZ_KMOD_NAME=com.razvanccr.$NAME -x c -c kmod/kmod_info.c -o "$OBJ/kmod_info.o"
 
-# Classic ld64, as the reference kexts were linked with; debug STABS are stripped afterwards (keepsyms=1 only needs the symbol table).
-xcrun clang++ -arch x86_64 -mmacosx-version-min=13.0 -fapple-kext -nostdlib -Xlinker -kext -Xlinker -no_data_const -Xlinker -ld_classic \
-  -L"$MKSDK/Library/x86_64" -lkmodc++ -lkmod -lcc_kext "$OBJ"/*.o -o "$KEXT/Contents/MacOS/QwzMac"
-strip -S "$KEXT/Contents/MacOS/QwzMac"
-# Without these the kernel and OpenCore reject the kext ("Invalid Parameter").
-for sym in _kmod_info __start __stop __realmain; do
-  nm "$KEXT/Contents/MacOS/QwzMac" | grep -q " $sym\$" || { echo "STOP: $sym missing from the kext"; exit 1; }
-done
-# A kext must never define a symbol the kernel exports: every call to it in the
-# kext would bind to ours instead (a macro once turned explicit_bzero into a
-# self-recursive bzero). The kext/kmod entry points are the expected exceptions.
-KERNEL_BIN=/System/Library/Kernels/kernel
-if [ -f "$KERNEL_BIN" ]; then
-  clash=$(comm -12 <(nm -gU "$KEXT/Contents/MacOS/QwzMac" | awk '{print $3}' | sort -u) \
-                   <(nm -gU "$KERNEL_BIN" | awk '{print $3}' | sort -u) \
-          | grep -vE '^(_kmod_info|__start|__stop|__realmain|__antimain|_kext_apple_cc)$' \
-          | grep -vE '^_timingsafe_bcmp$' || true)   # itl80211/openbsd/net80211/_string.c, as in itlwm
-  [ -z "$clash" ] || { echo "STOP: the kext defines kernel symbols: $clash"; exit 1; }
+  # Classic ld64, as the reference kexts were linked with; debug STABS are stripped afterwards (keepsyms=1 only needs the symbol table).
+  xcrun clang++ -arch x86_64 -mmacosx-version-min=13.0 -fapple-kext -nostdlib -Xlinker -kext -Xlinker -no_data_const -Xlinker -ld_classic \
+    -L"$MKSDK/Library/x86_64" -lkmodc++ -lkmod -lcc_kext "$OBJ"/*.o -o "$KEXT/Contents/MacOS/$NAME"
+  strip -S "$KEXT/Contents/MacOS/$NAME"
+  # Without these the kernel and OpenCore reject the kext ("Invalid Parameter").
+  local sym
+  for sym in _kmod_info __start __stop __realmain; do
+    nm "$KEXT/Contents/MacOS/$NAME" | grep -q " $sym\$" || { echo "STOP: $sym missing from $NAME"; exit 1; }
+  done
+  # A kext must never define a symbol the kernel exports: every call to it in the
+  # kext would bind to ours instead (a macro once turned explicit_bzero into a
+  # self-recursive bzero). The kext/kmod entry points are the expected exceptions.
+  local KERNEL_BIN=/System/Library/Kernels/kernel clash
+  if [ -f "$KERNEL_BIN" ]; then
+    clash=$(comm -12 <(nm -gU "$KEXT/Contents/MacOS/$NAME" | awk '{print $3}' | sort -u) \
+                     <(nm -gU "$KERNEL_BIN" | awk '{print $3}' | sort -u) \
+            | grep -vE '^(_kmod_info|__start|__stop|__realmain|__antimain|_kext_apple_cc)$' \
+            | grep -vE '^_timingsafe_bcmp$' || true)   # itl80211/openbsd/net80211/_string.c, as in itlwm
+    [ -z "$clash" ] || { echo "STOP: $NAME defines kernel symbols: $clash"; exit 1; }
+  fi
+  sed "s/@VERSION@/$VERSION/g" "$PLIST" > "$KEXT/Contents/Info.plist"
+  echo "$NAME $VERSION $(shasum -a 256 "$KEXT/Contents/MacOS/$NAME" | cut -c1-8) $(stat -f %z "$KEXT/Contents/MacOS/$NAME") B -> $KEXT"
+}
+
+CORE=$(find itl80211 include/HAL qwz firmware -name '*.c' -o -name '*.cpp' | sort)
+
+if [ "$PRODUCT" = all ] || [ "$PRODUCT" = QwzMac ]; then
+  build_kext QwzMac Info.plist qwzmac "$CORE $(find controller -name '*.cpp' | sort)"
 fi
-sed "s/@VERSION@/$VERSION/g" Info.plist > "$KEXT/Contents/Info.plist"
-echo "QwzMac $VERSION $(shasum -a 256 "$KEXT/Contents/MacOS/QwzMac" | cut -c1-8) $(stat -f %z "$KEXT/Contents/MacOS/QwzMac") B -> $KEXT"
+if [ "$PRODUCT" = all ] || [ "$PRODUCT" = AirportQwz ]; then
+  # controller/ItlQwz.cpp is the HAL and is shared; itlwm.cpp, the user client and pm.cpp are HeliPort-only.
+  build_kext AirportQwz airport/Info.plist airport "$CORE controller/ItlQwz.cpp $(find airport -name '*.cpp' | sort)" \
+    -I airport -I airport/WCL -I include/Airport $(find include/Airport -type d | sed 's/^/-I /' | tr '\n' ' ') \
+    -DAIRPORT -DAIRPORT_WCL -D__IO80211_TARGET=__MAC_26_0 -DIO80211FAMILY_V2
+fi

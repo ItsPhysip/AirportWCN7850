@@ -34,6 +34,10 @@ public:
     virtual const char *getFirmwareCountryCode() = 0;
 
     virtual uint32_t getTxQueueSize() = 0;
+
+    /* Native Wi-Fi: rate of the last received data frame, 0 / -1 if unknown. */
+    virtual uint32_t getRxRateKbps() { return 0; }
+    virtual int getRxRateMcs() { return -1; }
 };
 
 #endif /* ItlDriverInfo_h */

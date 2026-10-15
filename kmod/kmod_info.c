@@ -9,8 +9,14 @@
 extern kern_return_t _start(kmod_info_t *ki, void *data);
 extern kern_return_t _stop(kmod_info_t *ki, void *data);
 
+/* The bundle id comes from the build (-DQWZ_KMOD_NAME=com.razvanccr.<product>);
+ * the extra macro level expands it before KMOD_EXPLICIT_DECL stringifies it. */
+#ifndef QWZ_KMOD_NAME
+#define QWZ_KMOD_NAME com.razvanccr.QwzMac
+#endif
+#define QWZ_KMOD(name) KMOD_EXPLICIT_DECL(name, QWZMAC_VERSION, _start, _stop)
 __attribute__((visibility("default")))
-KMOD_EXPLICIT_DECL(com.razvanccr.QwzMac, QWZMAC_VERSION, _start, _stop)
+QWZ_KMOD(QWZ_KMOD_NAME)
 
 __private_extern__ kmod_start_func_t *_realmain = 0;
 __private_extern__ kmod_stop_func_t *_antimain = 0;

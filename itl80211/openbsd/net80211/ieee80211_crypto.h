@@ -217,4 +217,23 @@ mbuf_t ieee80211_bip_decap(struct ieee80211com *, mbuf_t,
 	    struct ieee80211_key *);
 
 #endif /* _KERNEL */
+
+/*
+ * One byte derived from a key, for the driver log: two log lines with
+ * different values used different keys (equal values: almost surely the
+ * same key). It cannot be turned back into the key.
+ */
+static __inline u_int8_t
+ieee80211_key_check(const u_int8_t *key, size_t len)
+{
+	u_int32_t h = 2166136261U;
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		h ^= key[i];
+		h *= 16777619U;
+	}
+	return (u_int8_t)(h ^ (h >> 8) ^ (h >> 16) ^ (h >> 24));
+}
+
 #endif /* _NET80211_IEEE80211_CRYPTO_H_ */
