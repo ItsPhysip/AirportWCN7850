@@ -45,6 +45,9 @@ public:
 	/* ItlDriverController */
 	void clearScanningFlags() override;
 	IOReturn setMulticastList(IOEthernetAddress *addr, int count) override;
+#ifdef AIRPORT_WCL
+	IOReturn setScanHomeAwayTime(uint32_t ms) override;
+#endif
 
 private:
 	static IOReturn attachGated(OSObject *owner, void *arg0, void *, void *, void *);

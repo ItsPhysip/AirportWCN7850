@@ -56,6 +56,9 @@
 
 #include "qwz_compat.h"	/* macOS: replaces the OpenBSD kernel headers */
 #define QWZ_TRACE(fmt, ...)	qwz_log("qwz: trace: " fmt "\n", ##__VA_ARGS__)
+#ifdef AIRPORT_WCL
+#include "WCL/WCL.hpp"	/* AirportQwz: scan helpers (scanUsesProbes, scanChannelSelected) */
+#endif
 
 /* XXX linux porting goo */
 #ifdef __LP64__
@@ -237,8 +240,35 @@ qwz_stage_park(struct qwz_softc *sc, int n, const char *what)
 }
 #endif
 
+#ifdef AIRPORT_WCL
+static int qwz_init_impl(struct ifnet *);
+
+/*
+ * The native Wi-Fi interface (AirportQwz) reports the adapter to macOS as
+ * resetting, then available or gone, from these events.
+ */
 int
 qwz_init(struct ifnet *ifp)
+{
+	struct qwz_softc *sc = (struct qwz_softc *)ifp->if_softc;
+	struct ieee80211com *ic = &sc->sc_ic;
+	int rv;
+
+	if (ic->ic_event_handler)
+		ic->ic_event_handler(ic, IEEE80211_EVT_DRIVER_RESET_BEGIN, NULL);
+	rv = qwz_init_impl(ifp);
+	if (ic->ic_event_handler)
+		ic->ic_event_handler(ic, rv ? IEEE80211_EVT_DRIVER_STOPPED :
+		    IEEE80211_EVT_DRIVER_READY, NULL);
+	return rv;
+}
+
+static int
+qwz_init_impl(struct ifnet *ifp)
+#else
+int
+qwz_init(struct ifnet *ifp)
+#endif
 {
 	int error, core_ready = 0;
 	struct qwz_softc *sc = (struct qwz_softc *)(ifp->if_softc);
@@ -487,6 +517,16 @@ qwz_stop(struct ifnet *ifp)
 	 * or call qwz_core_deinit() here.
 	 */
 
+#ifdef AIRPORT_WCL
+	/* A stopped firmware scan cannot deliver its completion event. */
+	ic->ic_flags &= ~(IEEE80211_F_BGSCAN | IEEE80211_F_ASCAN);
+	ic->ic_wcl_scan_requested = false;
+	ic->ic_wcl_scan_active = false;
+	ic->ic_wcl_scan_ssid_length = 0;
+	ic->ic_wcl_scan_idle = false;
+	if (ic->ic_event_handler)
+		ic->ic_event_handler(ic, IEEE80211_EVT_DRIVER_STOPPED, NULL);
+#endif
 	splx(s);
 }
 
@@ -563,6 +603,15 @@ qwz_tx(struct qwz_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 
 	wh = mtod(m, struct ieee80211_frame *);
 	frame_type = wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK;
+#ifdef AIRPORT_WCL
+	/* Per access category data counters for macOS's link quality. */
+	if (frame_type == IEEE80211_FC0_TYPE_DATA &&
+	    !(wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_NODATA)) {
+		unsigned ac = ieee80211_has_qos(wh) ?
+		    ieee80211_wcl_ac(ieee80211_get_qos(wh) & IEEE80211_QOS_TID) : EDCA_AC_BE;
+		++sc->sc_ic.ic_wcl_tx_packets[ac];
+	}
+#endif
 
 #if NBPFILTER > 0
 	if (sc->sc_drvbpf != NULL) {
@@ -24240,6 +24289,26 @@ qwz_scan(struct qwz_softc *sc)
 	arg->vdev_id = arvif->vdev_id;
 	arg->scan_id = ATH12K_SCAN_ID;
 
+#ifdef AIRPORT_WCL
+	/*
+	 * A scan macOS asked for (AirportQwz): active when it wants probes,
+	 * with its SSID (hidden networks), on its channels (below). Scans the
+	 * driver starts itself keep OpenBSD's behaviour.
+	 */
+	if (ic->ic_wcl_scan_requested &&
+	    AirportWCL::scanUsesProbes(true, ic->ic_wcl_scan_active)) {
+		if (ic->ic_wcl_scan_ssid_length > 0 &&
+		    ic->ic_wcl_scan_ssid_length <= IEEE80211_NWID_LEN) {
+			arg->num_ssids = 1;
+			arg->ssid[0].length = ic->ic_wcl_scan_ssid_length;
+			memcpy(&arg->ssid[0].ssid, ic->ic_wcl_scan_ssid,
+			    ic->ic_wcl_scan_ssid_length);
+		}
+		/* active, wildcard probe when no SSID */
+	} else if (ic->ic_wcl_scan_requested) {
+		arg->scan_flags |= WMI_SCAN_FLAG_PASSIVE;
+	} else
+#endif
 	if (ic->ic_des_esslen != 0) {
 		arg->num_ssids = 1;
 		arg->ssid[0].length  = ic->ic_des_esslen;
@@ -24264,6 +24333,12 @@ qwz_scan(struct qwz_softc *sc)
 		if ((!scan_2ghz && IEEE80211_IS_CHAN_2GHZ(chan)) ||
 		    (!scan_5ghz && IEEE80211_IS_CHAN_5GHZ(chan)))
 			continue;
+#ifdef AIRPORT_WCL
+		if (!AirportWCL::scanChannelSelected(ic->ic_wcl_scan_channels,
+		    ic->ic_wcl_scan_requested && ic->ic_wcl_scan_restricted,
+		    ieee80211_mhz2ieee(chan->ic_freq, 0)))
+			continue;
+#endif
 		num_channels++;
 	}
 	if (num_channels) {
@@ -24283,6 +24358,12 @@ qwz_scan(struct qwz_softc *sc)
 			if ((!scan_2ghz && IEEE80211_IS_CHAN_2GHZ(chan)) ||
 			    (!scan_5ghz && IEEE80211_IS_CHAN_5GHZ(chan)))
 				continue;
+#ifdef AIRPORT_WCL
+			if (!AirportWCL::scanChannelSelected(ic->ic_wcl_scan_channels,
+			    ic->ic_wcl_scan_requested && ic->ic_wcl_scan_restricted,
+			    ieee80211_mhz2ieee(chan->ic_freq, 0)))
+				continue;
+#endif
 			arg->chan_list[i++] = chan->ic_freq;
 		}
 	}

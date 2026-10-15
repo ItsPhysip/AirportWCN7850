@@ -67,6 +67,8 @@ probe(IOService *provider, SInt32 *score)
     IOPCIDevice* device = OSDynamicCast(IOPCIDevice, provider);
     if (!device)
         return NULL;
+    qwz_log_set_target(device);	/* QwzMacLog/QwzMacStage on the PCI device, as the HeliPort build */
+    qwz_log_stage("probe (AirportQwz)");
     if (ItlQwz::qwz_match(device)) {
         isMatch = true;
         fHalService = new ItlQwz;

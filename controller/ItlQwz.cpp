@@ -311,3 +311,14 @@ ItlQwz::setMulticastList(IOEthernetAddress *addr, int count)
 {
 	return kIOReturnSuccess;
 }
+
+#ifdef AIRPORT_WCL
+IOReturn
+ItlQwz::setScanHomeAwayTime(uint32_t ms)
+{
+	if (sc == NULL)
+		return kIOReturnNotReady;
+	sc->sc_ic.ic_wcl_scan_away_time_ms = ms;
+	return kIOReturnSuccess;
+}
+#endif
