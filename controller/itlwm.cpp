@@ -434,6 +434,12 @@ SYSCTL_PROC(_debug_qwz, OID_AUTO, start, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCK
 SYSCTL_INT(_debug_qwz, OID_AUTO, stage, CTLFLAG_RW | CTLFLAG_LOCKED,
     &qwz_stage_sysctl, 0, "stop the bring-up before this stage (-1: boot-time limit)");
 
+#ifdef QWZ_DEBUG
+extern uint32_t qwz_debug;	/* qwz/qwz.c: QWZ_D_* mask from qwzvar.h */
+SYSCTL_UINT(_debug_qwz, OID_AUTO, debug, CTLFLAG_RW | CTLFLAG_LOCKED,
+    &qwz_debug, 0, "qwz debug mask (QWZ_D_* in qwzvar.h)");
+#endif
+
 static bool qwz_sysctl_registered;
 
 void qwz_sysctl_register(itlwm *owner)
@@ -444,6 +450,9 @@ void qwz_sysctl_register(itlwm *owner)
     sysctl_register_oid(&sysctl__debug_qwz);
     sysctl_register_oid(&sysctl__debug_qwz_start);
     sysctl_register_oid(&sysctl__debug_qwz_stage);
+#ifdef QWZ_DEBUG
+    sysctl_register_oid(&sysctl__debug_qwz_debug);
+#endif
     qwz_sysctl_registered = true;
 }
 
@@ -452,6 +461,9 @@ void qwz_sysctl_unregister(void)
     qwz_sysctl_owner = NULL;
     if (!qwz_sysctl_registered)
         return;
+#ifdef QWZ_DEBUG
+    sysctl_unregister_oid(&sysctl__debug_qwz_debug);
+#endif
     sysctl_unregister_oid(&sysctl__debug_qwz_stage);
     sysctl_unregister_oid(&sysctl__debug_qwz_start);
     sysctl_unregister_oid(&sysctl__debug_qwz);

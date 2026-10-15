@@ -4019,8 +4019,14 @@ qwz_ce_intr(void *arg)
 
 	if (!test_bit(ATH12K_FLAG_CE_IRQ_ENABLED, sc->sc_flags) ||
 	    ((sc->msi_ce_irqmask & (1 << pipe->pipe_num)) == 0)) {
-		DPRINTF("%s: unexpected interrupt on pipe %d\n",
-		    __func__, pipe->pipe_num);
+		/*
+		 * macOS: with a single MSI vector every interrupt is offered to
+		 * every pipe, so this is routine there; only report it when
+		 * the pipe has a vector of its own.
+		 */
+		if (test_bit(ATH12K_FLAG_MULTI_MSI_VECTORS, sc->sc_flags))
+			DPRINTF("%s: unexpected interrupt on pipe %d\n",
+			    __func__, pipe->pipe_num);
 		return 1;
 	}
 

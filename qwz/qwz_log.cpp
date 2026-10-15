@@ -16,7 +16,7 @@
 #include <sys/fcntl.h>
 #include <sys/mount.h>
 
-#define QWZ_LOG_SIZE	(128 * 1024)
+#define QWZ_LOG_SIZE	(512 * 1024)
 
 static char qwz_log_ring[QWZ_LOG_SIZE];
 static volatile uint64_t qwz_log_head;	/* bytes ever written */

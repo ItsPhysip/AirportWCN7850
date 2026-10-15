@@ -794,6 +794,15 @@ qwz_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t off, bus_size_
 		len = map->dm_mapsize - off;
 	bounce = map->_bounce->kva + off;
 
+	/*
+	 * PREREAD hands the buffer back to the device, so a copy-out done by
+	 * an earlier POSTREAD is stale: unload must copy out again. (qwz's CE
+	 * rx enqueue POSTREAD-syncs the new buffer before posting it, and the
+	 * receive path then unloads without a sync; with the flag left set,
+	 * the firmware's HTC ready message was never copied into the mbuf.)
+	 */
+	if (ops & BUS_DMASYNC_PREREAD)
+		map->_postread = 0;
 	if (ops & BUS_DMASYNC_PREWRITE) {
 		if (map->_mbuf)
 			mbuf_copydata(map->_mbuf, off, len, bounce);
