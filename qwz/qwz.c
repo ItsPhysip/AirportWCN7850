@@ -305,9 +305,16 @@ qwz_init(struct ifnet *ifp)
 	if (sc->fw_initialized && (ifp->if_flags & IFF_UP) &&
 	    sc->num_created_vdevs > 0 &&
 	    !IEEE80211_ADDR_EQ(sc->sc_vif.vdev_addr, ic->ic_myaddr)) {
-		printf("%s: address changed to %s: restarting the firmware\n",
+		printf("%s: address changed to %s: recreating the vdev\n",
 		    sc->sc_dev.dv_xname, ether_sprintf(ic->ic_myaddr));
-		qwz_core_deinit(sc);
+		if (qwz_mac_vdev_delete_wait(sc, &sc->sc_vif) == 0 &&
+		    qwz_mac_op_add_interface(&sc->pdevs[0]) == 0) {
+			/* same firmware, new address: carry on below */
+		} else {
+			printf("%s: vdev recreate failed: restarting the firmware\n",
+			    sc->sc_dev.dv_xname);
+			qwz_core_deinit(sc);
+		}
 	}
 #endif
 	/* Firmware stays running across ifconfig down/up; only re-scan. */
@@ -12415,6 +12422,12 @@ qwz_wmi_tlv_op_rx(struct qwz_softc *sc, struct mbuf *m)
 	case WMI_VDEV_STOPPED_EVENTID:
 		qwz_vdev_stopped_event(sc, m);
 		break;
+#ifdef __APPLE__
+	case WMI_VDEV_DELETE_RESP_EVENTID:
+		sc->vdev_delete_done = 1;
+		wakeup(&sc->vdev_delete_done);
+		break;
+#endif
 	case WMI_MGMT_RX_EVENTID:
 		qwz_mgmt_rx_event(sc, m);
 		/* mgmt_rx_event() owns the skb now! */
@@ -18459,6 +18472,67 @@ qwz_wmi_mgmt_send(struct qwz_softc *sc, struct qwz_vif *arvif, uint8_t pdev_id,
 	tx_data->m = frame;
 	return 0;
 }
+
+#ifdef __APPLE__
+int
+qwz_wmi_vdev_delete(struct qwz_softc *sc, uint8_t vdev_id, uint8_t pdev_id)
+{
+	struct qwz_pdev_wmi *wmi = &sc->wmi.wmi[pdev_id];
+	struct wmi_vdev_delete_cmd *cmd;
+	struct mbuf *m;
+	int ret;
+
+	m = qwz_wmi_alloc_mbuf(sizeof(*cmd));
+	if (!m)
+		return ENOMEM;
+
+	cmd = (struct wmi_vdev_delete_cmd *)(mtod(m, uint8_t *) +
+	    sizeof(struct ath12k_htc_hdr) + sizeof(struct wmi_cmd_hdr));
+	cmd->tlv_header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_VDEV_DELETE_CMD) |
+	    FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
+	cmd->vdev_id = vdev_id;
+
+	ret = qwz_wmi_cmd_send(wmi, m, WMI_VDEV_DELETE_CMDID);
+	if (ret) {
+		printf("%s: failed to submit WMI_VDEV_DELETE_CMDID\n",
+		    sc->sc_dev.dv_xname);
+		m_freem(m);
+		return ret;
+	}
+	DNPRINTF(QWZ_D_WMI, "%s: cmd vdev delete id %d\n", __func__, vdev_id);
+	return 0;
+}
+
+/*
+ * Delete the vdev and wait for the firmware's response, then release its
+ * id. Used when macOS changes the interface address: the vdev carries the
+ * address, and recreating it is far gentler than restarting the firmware.
+ */
+int
+qwz_mac_vdev_delete_wait(struct qwz_softc *sc, struct qwz_vif *arvif)
+{
+	int ret;
+
+	sc->vdev_delete_done = 0;
+	ret = qwz_wmi_vdev_delete(sc, arvif->vdev_id, 0);
+	if (ret)
+		return ret;
+	while (!sc->vdev_delete_done) {
+		ret = tsleep_nsec(&sc->vdev_delete_done, 0, "qwzvdevdel",
+		    SEC_TO_NSEC(3));
+		if (ret) {
+			printf("%s: vdev %d delete timeout\n",
+			    sc->sc_dev.dv_xname, arvif->vdev_id);
+			return ret;
+		}
+	}
+	sc->num_created_vdevs--;
+	sc->allocated_vdev_map &= ~(1U << arvif->vdev_id);
+	sc->free_vdev_map |= 1U << arvif->vdev_id;
+	DNPRINTF(QWZ_D_MAC, "%s: vdev %d deleted\n", __func__, arvif->vdev_id);
+	return 0;
+}
+#endif
 
 int
 qwz_wmi_vdev_create(struct qwz_softc *sc, uint8_t *macaddr,

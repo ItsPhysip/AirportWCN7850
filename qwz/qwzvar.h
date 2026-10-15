@@ -2086,6 +2086,9 @@ struct qwz_softc {
 	int				bss_peer_id;
 	int				peer_mapped;
 	int				peer_delete_done;
+#ifdef __APPLE__
+	int				vdev_delete_done;	/* WMI_VDEV_DELETE_RESP arrived */
+#endif
 	int				vdev_setup_done;
 	int				peer_assoc_done;
 
@@ -2199,6 +2202,8 @@ struct ath12k_peer *qwz_peer_find_by_addr(struct qwz_softc *, const uint8_t *);
 struct ieee80211_node *qwz_node_alloc(struct ieee80211com *);
 void qwz_node_free(struct ieee80211com *, struct ieee80211_node *);
 int qwz_bgscan(struct ieee80211com *);
+int qwz_mac_vdev_delete_wait(struct qwz_softc *, struct qwz_vif *);
+int qwz_mac_op_add_interface(struct qwz_pdev *);
 int	qwz_set_key(struct ieee80211com *, struct ieee80211_node *,
     struct ieee80211_key *);
 void	qwz_delete_key(struct ieee80211com *, struct ieee80211_node *,
