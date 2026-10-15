@@ -53,6 +53,7 @@ private:
     static IOReturn sTX_POWER_LEVEL(OSObject* target, void* data, bool isSet);
     static IOReturn sNW_BSSID(OSObject* target, void* data, bool isSet);
     static const IOControlMethodAction sMethods[IOCTL_ID_MAX];
+    static IOReturn externalMethodGated(OSObject *, void *, void *, void *, void *);
     
 private:
     task_t fTask;

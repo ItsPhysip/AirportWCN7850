@@ -346,11 +346,27 @@ m_defrag(mbuf_t m, int how)
     if (m0 == NULL)
         return (ENOBUFS);
     if (mbuf_pkthdr_len(m) > mbuf_get_mhlen()) {
-        mbuf_getcluster(how, mbuf_type(m), mbuf_pkthdr_len(m), &m0);
-//        if (!(m0->m_flags & M_EXT)) {
-//            m_free(m0);
-//            return (ENOBUFS);
-//        }
+        /*
+         * QwzMac: xnu only hands out 2 KB, 4 KB and 16 KB clusters and
+         * rejects any other size, which left m0 without a cluster and the
+         * copy below overran it. Round up and check.
+         */
+        /* the cluster sizes mbuf_getcluster() accepts */
+        const size_t kCl2K = 2048, kClBig = 4096, kCl16K = 16384;
+        size_t len = mbuf_pkthdr_len(m), csize;
+        if (len <= kCl2K)
+            csize = kCl2K;
+        else if (len <= kClBig)
+            csize = kClBig;
+        else if (len <= kCl16K)
+            csize = kCl16K;
+        else
+            csize = 0;
+        if (csize == 0 || mbuf_getcluster(how, mbuf_type(m), csize, &m0) != 0 ||
+            !(mbuf_flags(m0) & MBUF_EXT)) {
+            mbuf_freem(m0);
+            return (ENOBUFS);
+        }
     }
     mbuf_copydata(m, 0, mbuf_pkthdr_len(m), mtod(m0, void*));
     mbuf_pkthdr_setlen(m0, mbuf_pkthdr_len(m));

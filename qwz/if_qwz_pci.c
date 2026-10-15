@@ -731,6 +731,10 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 
 	reg = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
 	reg |= PCI_COMMAND_MASTER_ENABLE;
+#ifdef __APPLE__
+	/* Command half only (status bits are write-1-to-clear); MSI only. */
+	reg = (reg & 0xffff) | PCI_COMMAND_INTERRUPT_DISABLE;
+#endif
 	pci_conf_write(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG, reg);
 
 	memtype = pci_mapreg_type(pa->pa_pc, pa->pa_tag, PCI_MAPREG_START);

@@ -723,6 +723,13 @@ qwz_bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *buf, bus_size_t len
 	}
 	IOLockUnlock(qwz_dma_lock);
 
+	/*
+	 * Not from bus_dmamem_map(): bounce it. Nothing is copied unless the
+	 * caller syncs (PREWRITE/POSTREAD), so say so: every qwz caller today
+	 * passes dmamem, and a new one that does not would fail silently.
+	 */
+	QWZLOG("bus_dmamap_load: %zu bytes at %p are not dmamem, bouncing (flags 0x%x)",
+	    (size_t)len, buf, flags);
 	map->_kva = buf;
 	return qwz_map_bounce(map, len);
 }

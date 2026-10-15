@@ -13,6 +13,9 @@
 */
 
 #include "ItlNetworkUserClient.hpp"
+#include <IOKit/IOCommandGate.h>
+
+extern IOCommandGate *_fCommandGate;	/* itlwm.cpp */
 #include <sys/_netstat.h>
 
 #define super IOUserClient
@@ -90,7 +93,24 @@ IOReturn ItlNetworkUserClient::externalMethod(uint32_t selector, IOExternalMetho
     if (!data) {
         return kIOReturnError;
     }
-    return sMethods[selector](this, data, isSet);
+    /*
+     * QwzMac: run every request holding the command gate, as OpenBSD runs
+     * ioctls holding the kernel lock. qwz may tsleep() while handling them
+     * (waiting on the firmware), which only works under the gate.
+     */
+    if (_fCommandGate == NULL)
+        return kIOReturnNotReady;
+    return _fCommandGate->runAction(&ItlNetworkUserClient::externalMethodGated,
+        this, (void *)(uintptr_t)selector, data, (void *)(uintptr_t)isSet);
+}
+
+IOReturn ItlNetworkUserClient::externalMethodGated(OSObject *owner, void *arg0,
+    void *arg1, void *arg2, void *arg3)
+{
+    ItlNetworkUserClient *that = (ItlNetworkUserClient *)owner;
+    uint32_t selector = (uint32_t)(uintptr_t)arg0;
+
+    return sMethods[selector](that, arg1, (bool)(uintptr_t)arg2);
 }
 
 IOReturn ItlNetworkUserClient::
