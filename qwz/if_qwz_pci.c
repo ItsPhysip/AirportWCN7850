@@ -309,6 +309,9 @@ struct qwz_pci_softc {
 	pcitag_t		sc_tag;
 	int			sc_cap_off;
 	int			sc_msi_off;
+#ifdef __APPLE__
+	int			sc_powered_down;	/* chip reset by power_down: keep off the bus */
+#endif
 	pcireg_t		sc_msi_cap;
 	void			*sc_ih[QWZ_NUM_MSI_VEC];
 	char			sc_ivname[QWZ_NUM_MSI_VEC][16];
@@ -2126,6 +2129,9 @@ qwz_pci_power_up(struct qwz_softc *sc)
 
 	psc->register_window = 0;
 	clear_bit(ATH12K_FLAG_DEVICE_INIT_DONE, sc->sc_flags);
+#ifdef __APPLE__
+	psc->sc_powered_down = 0;
+#endif
 
 	if (!qwz_stage_ok(10, "chip reset (LTSSM, SoC global reset)"))
 		return EIO;
@@ -2471,6 +2477,9 @@ qwz_pci_power_down(struct qwz_softc *sc)
 		xfer->m = NULL;
 	}
 	ring->queued = 0;
+#ifdef __APPLE__
+	psc->sc_powered_down = 1;
+#endif
 	QWZ_TRACE("%s: done", __func__);
 }
 
@@ -4213,6 +4222,16 @@ qwz_pci_intr(void *arg)
 	uint32_t ee, state;
 	int ret = 0;
 
+#ifdef __APPLE__
+	/*
+	 * An interrupt queued while the gate was held (the chip signals as it
+	 * resets) runs as soon as the gate is released, after power_down has
+	 * reset the chip. Reading registers of the reset chip hung the whole
+	 * machine on this AMD platform, so leave it alone until power_up.
+	 */
+	if (psc->sc_powered_down)
+		return 1;
+#endif
 	/*
 	 * Interrupts can trigger before mhi_start() during boot if the device
 	 * is still active after a warm reboot.
