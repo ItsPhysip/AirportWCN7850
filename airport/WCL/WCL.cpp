@@ -703,7 +703,9 @@ void AirportItlwmSkywalkInterface::handleWCLEvent(int code, void *data)
 #else
                     AirportWCL::LqmBeaconUpdate update;
                     if (AirportWCL::makeBeaconUpdate(
-                            wclLqmBeacons - wclLqmReportedBeacons, update)) {
+                            wclLqmBeacons - wclLqmReportedBeacons,
+                            (int8_t)ic->ic_bss->ni_rssi,	/* dBm */
+                            fHalService->getDriverInfo()->getBSSNoise(), update)) {
                         instance->postMessage(this, AirportWCL::LqmUpdate,
                             &update, sizeof(update), true);
                         wclLqmReportedBeacons = wclLqmBeacons;

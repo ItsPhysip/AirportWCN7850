@@ -143,7 +143,7 @@ public:
     virtual IOReturn getAP_IE_LIST(apple80211_ap_ie_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn getSTATS(apple80211_stats_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getASSOCIATION_STATUS(apple80211_assoc_status_data *) AIRPORT_SKYWALK_OVERRIDE;
-    virtual IOReturn getGUARD_INTERVAL(apple80211_guard_interval_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+    virtual IOReturn getGUARD_INTERVAL(apple80211_guard_interval_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn getMCS(apple80211_mcs_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn getMCS_INDEX_SET(apple80211_mcs_index_set_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn getWOW_PARAMETERS(apple80211_wow_parameter_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
@@ -225,7 +225,7 @@ public:
     virtual IOReturn getBEACON_SCAN_CACHE_REQ(apple80211_scan_result *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getSLOW_WIFI_FEATURE_ENABLED(apple80211_slow_wifi_feature_enabled *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getCCA(apple80211_interface_cca_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
-    virtual IOReturn getRX_RATE(apple80211_rate_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+    virtual IOReturn getRX_RATE(apple80211_rate_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn getTIMESYNC_INFO(apple80211_timesync_info *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getSENSING_DATA(apple80211_sensing_data_t *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getCOUNTRY_BAND_SUPPORT(apple80211_country_band_support *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }

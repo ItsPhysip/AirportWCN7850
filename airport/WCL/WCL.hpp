@@ -77,10 +77,24 @@ struct SequoiaLqmUpdate {
 static_assert(sizeof(SequoiaLqmUpdate) == 0x150, "Sequoia LQM size");
 static_assert(offsetof(SequoiaLqmUpdate, rssi) == 4, "Sequoia LQM RSSI offset");
 
-// WCLNetManager::handleLqmUpdate consumes this 0x1dc snapshot.
-// Only beacon reception is valid; unavailable radio measurements stay invalid.
+// WCLNetManager::handleLqmUpdate consumes this 0x1dc snapshot. The radio
+// fields it reads (each behind its own valid byte): RSSI (int32, 0x4), noise
+// (int16, 0x10), CCA (uint8, 0x13). WCLConfigManager answers the NOISE and
+// CCA ioctls only from here; a driver getter is never asked for them.
+// Measurements the driver does not have stay invalid.
 struct LqmBeaconUpdate {
-    uint8_t prefix[0x28];
+    uint8_t rssiValid;
+    uint8_t reserved0[3];
+    int32_t rssi;                 // dBm
+    uint8_t reserved1[3];
+    uint8_t unknown0bValid;
+    uint16_t unknown0c;
+    uint8_t noiseValid;
+    uint8_t reserved2;
+    int16_t noise;                // dBm
+    uint8_t ccaValid;
+    uint8_t cca;                  // percent
+    uint8_t reserved3[0x28 - 0x14];
     uint32_t receivedDelta;
     uint32_t scheduledDelta;
     uint8_t beaconValid;
@@ -90,16 +104,28 @@ struct LqmBeaconUpdate {
     uint8_t tail[2];
 };
 static_assert(sizeof(LqmBeaconUpdate) == 0x1dc, "WCL LQM update size");
+static_assert(offsetof(LqmBeaconUpdate, rssi) == 0x4, "WCL LQM RSSI offset");
+static_assert(offsetof(LqmBeaconUpdate, noiseValid) == 0xe, "WCL LQM noise valid offset");
+static_assert(offsetof(LqmBeaconUpdate, noise) == 0x10, "WCL LQM noise offset");
+static_assert(offsetof(LqmBeaconUpdate, cca) == 0x13, "WCL LQM CCA offset");
 static_assert(offsetof(LqmBeaconUpdate, receivedDelta) == 0x28, "WCL beacon delta offset");
 static_assert(offsetof(LqmBeaconUpdate, beaconValid) == 0x30, "WCL beacon valid offset");
 static_assert(offsetof(LqmBeaconUpdate, snapshotValid) == 0x1d8, "WCL snapshot valid offset");
-inline bool makeBeaconUpdate(uint32_t receivedDelta, LqmBeaconUpdate &out)
+inline bool makeBeaconUpdate(uint32_t receivedDelta, int rssi, int noise, LqmBeaconUpdate &out)
 {
     out = {};
     if (!receivedDelta)
         return false;
     out.receivedDelta = receivedDelta;
     out.beaconValid = out.snapshotValid = out.countersValid = 1;
+    if (rssi < 0) {
+        out.rssiValid = 1;
+        out.rssi = rssi;
+    }
+    if (noise < 0) {
+        out.noiseValid = 1;
+        out.noise = (int16_t)noise;
+    }
     return true;
 }
 

@@ -38,6 +38,8 @@ public:
     /* Native Wi-Fi: rate of the last received data frame, 0 / -1 if unknown. */
     virtual uint32_t getRxRateKbps() { return 0; }
     virtual int getRxRateMcs() { return -1; }
+    virtual int getRxRateNss() { return 0; }
+    virtual int getRxRateSgi() { return -1; }	/* 1 short GI, 0 long, -1 unknown */
 };
 
 #endif /* ItlDriverInfo_h */

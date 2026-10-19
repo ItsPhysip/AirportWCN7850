@@ -8,6 +8,7 @@
 
 #include "IOPCIEDeviceWrapper.hpp"
 #include "qwz_log.h"
+#include "qwz_sysctl.h"
 #include <kern/thread_call.h>
 #include <kern/clock.h>
 #include "Apple80211.h"
@@ -110,6 +111,8 @@ start(IOService *provider)
         return false;
     }
     IOLog("%s::super start succeed\n", getName());
+    /* debug.qwz.publish/logfile/stage/debug as in QwzMac.kext; start has no bring-up to rerun here. */
+    qwz_sysctl_register(NULL, NULL);
     UInt8 builtIn = 0;
     setProperty("built-in", OSData::withBytes(&builtIn, sizeof(builtIn)));
     PMinit();
@@ -174,6 +177,7 @@ void IOPCIEDeviceWrapper::
 stop(IOService *provider)
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);
+    qwz_sysctl_unregister();
     if (logTimer) {
         logTimer->cancelTimeout();
         _fWorkloop->removeEventSource(logTimer);

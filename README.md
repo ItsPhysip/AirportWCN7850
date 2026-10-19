@@ -4,11 +4,11 @@ Native Wi-Fi for the **Qualcomm WCN7850** (FastConnect 7800, the NCM865 module) 
 
 The Bluetooth half of the chip is a separate project: [BluetoothWCN7850](https://github.com/razvanccr/BluetoothWCN7850).
 
-**Tested on:** MSI MAG X870 Tomahawk WiFi (onboard WCN7850), macOS 26.7.1 Tahoe, OpenCore. Scans, joins WPA2 networks, DHCP, about 170 Mbit/s each way, auto-connect at boot, private Wi-Fi addresses.
+**Tested on:** MSI MAG X870 Tomahawk WiFi (onboard WCN7850), macOS 26.7.1 Tahoe, OpenCore. Scans, joins WPA2 networks, DHCP, 802.11ac (VHT80, 2 spatial streams), auto-connect at boot, private Wi-Fi addresses. `wdutil info` shows the real RSSI, noise, rate, MCS and NSS.
 
 ## Download
 
-[release/AirportWCN7850-0.0.1.zip](release/AirportWCN7850-0.0.1.zip): the kext with the firmware embedded, and an `INSTALL.txt`.
+[release/AirportWCN7850-0.0.2.zip](release/AirportWCN7850-0.0.2.zip): the kext with the firmware embedded, nothing else is needed. Changes in [release/notes-0.0.2.md](release/notes-0.0.2.md).
 
 ## Install
 
@@ -16,13 +16,13 @@ The Bluetooth half of the chip is a separate project: [BluetoothWCN7850](https:/
 2. Not alongside itlwm or AirportItlwm; disable an `SSDT-Disable_Network_GPP7` if your config hides the card.
 3. Reboot and join a network from the Wi-Fi menu.
 
-`-qwzoff` in boot-args disables the driver. For a first boot on unknown hardware read [Testing safely](docs/bring-up.md#testing-safely).
+`-qwzoff` in boot-args disables the driver, `-novht` falls back to 802.11n. For a first boot on unknown hardware read [Testing safely](docs/bring-up.md#testing-safely).
 
 ## What does not work yet
 
 - WPA3/SAE, 802.1X without a supplicant; WPA1 and WEP use software crypto (this is what OpenBSD's `qwz(4)` supports).
-- 802.11n rates only; the chip's 11ac/ax/be, 320 MHz and MLO are not driven.
-- AirDrop/AWDL and the rest of Continuity. Sleep/wake is not verified.
+- 802.11ax/be, 160/320 MHz and MLO are not driven: the link is 802.11ac at up to 80 MHz, as in Linux ath12k without 160 MHz.
+- AirDrop/AWDL and the rest of Continuity (AWDL is not coming on this chip: [docs/awdl-feasibility.md](docs/awdl-feasibility.md)). Sleep/wake is not verified.
 - Broadcast and multicast are only received on open networks or WPA2 with a CCMP group cipher (ARP/IPv6 can fail on TKIP-group networks).
 
 How it works, the bring-up log, the debugging tools and the stage-by-stage bisection are in [docs/bring-up.md](docs/bring-up.md).

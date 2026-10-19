@@ -331,7 +331,39 @@ ItlQwz::is5GBandSupport()
 int
 ItlQwz::getTxNSS()
 {
-	return 2;
+	struct ieee80211com *ic = sc ? &sc->sc_ic : NULL;
+	int nss = (sc && sc->num_tx_chains > 0) ? sc->num_tx_chains : 2;
+
+	/* Spatial streams usable towards the BSS: our chains, capped by the AP. */
+	if (ic != NULL && ic->ic_bss != NULL && ic->ic_bss->ni_rx_nss > 0 &&
+	    ic->ic_bss->ni_rx_nss < nss)
+		nss = ic->ic_bss->ni_rx_nss;
+	return nss;
+}
+
+/* The last unicast data frame received: qwz_dp_rx_h_rate in qwz.c. */
+uint32_t
+ItlQwz::getRxRateKbps()
+{
+	return sc ? sc->sc_rx_rate_kbps : 0;
+}
+
+int
+ItlQwz::getRxRateMcs()
+{
+	return sc ? sc->sc_rx_rate_mcs : -1;
+}
+
+int
+ItlQwz::getRxRateNss()
+{
+	return sc ? sc->sc_rx_rate_nss : 0;
+}
+
+int
+ItlQwz::getRxRateSgi()
+{
+	return (sc && sc->sc_rx_rate_kbps != 0) ? sc->sc_rx_rate_sgi : -1;
 }
 
 const char *

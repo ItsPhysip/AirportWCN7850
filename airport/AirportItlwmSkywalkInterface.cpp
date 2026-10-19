@@ -7,6 +7,13 @@
 //
 #include "AirportItlwmV2.hpp"
 #include "AirportItlwmSkywalkInterface.hpp"
+#include "qwz_log.h"
+
+/* The first few calls of a link getter go to the log ring: what is asked, what is answered. */
+#define LINK_TRACE(fmt, ...) do { \
+    static int calls_; \
+    if (calls_ < 8) { calls_++; qwz_log("airport: %s " fmt "\n", __FUNCTION__, ##__VA_ARGS__); } \
+} while (0)
 #include <sys/CTimeout.hpp>
 #include <libkern/c++/OSMetaClass.h>
 #include <crypto/sha1.h>
@@ -510,7 +517,8 @@ IOReturn AirportItlwmSkywalkInterface::
 getVHT_MCS_INDEX_SET(struct apple80211_vht_mcs_index_set_data *data)
 {
     struct ieee80211com *ic = fHalService->get80211Controller();
-    if (ic->ic_bss == NULL || ic->ic_curmode != IEEE80211_MODE_11AC) {
+    /* The node's VHT flag, not ic_curmode: the mode can stay 11a on a VHT link. */
+    if (ic->ic_bss == NULL || !(ic->ic_bss->ni_flags & IEEE80211_NODE_VHT)) {
         return kIOReturnError;
     }
     memset(data, 0, sizeof(struct apple80211_vht_mcs_index_set_data));
@@ -523,15 +531,22 @@ IOReturn AirportItlwmSkywalkInterface::
 getMCS_VHT(struct apple80211_mcs_vht_data *data)
 {
     struct ieee80211com *ic = fHalService->get80211Controller();
-    if (ic->ic_bss == NULL || ic->ic_curmode != IEEE80211_MODE_11AC) {
+    /* wdutil's MCS, GI and NSS all come from here (ioctl 195); MCS and GUARD_INTERVAL are never asked. */
+    if (ic->ic_bss == NULL || !(ic->ic_bss->ni_flags & IEEE80211_NODE_VHT)) {
+        LINK_TRACE("refused: curmode %d bss %p flags 0x%x", ic->ic_curmode, ic->ic_bss, ic->ic_bss ? ic->ic_bss->ni_flags : 0);
         return kIOReturnError;
     }
     memset(data, 0, sizeof(struct apple80211_mcs_vht_data));
     data->version = APPLE80211_VERSION;
-    data->guard_interval = (ieee80211_node_supports_vht_sgi80(ic->ic_bss) || ieee80211_node_supports_vht_sgi160(ic->ic_bss)) ? APPLE80211_GI_SHORT : APPLE80211_GI_LONG;
+    int sgi = fHalService->getDriverInfo()->getRxRateSgi();	/* the last frame's GI, else the capability */
+    if (sgi < 0)
+        sgi = ieee80211_node_supports_vht_sgi80(ic->ic_bss) || ieee80211_node_supports_vht_sgi160(ic->ic_bss);
+    data->guard_interval = sgi ? APPLE80211_GI_SHORT : APPLE80211_GI_LONG;
     int mcs = fHalService->getDriverInfo()->getRxRateMcs();
+    int nss = fHalService->getDriverInfo()->getRxRateNss();
     data->index = mcs >= 0 ? mcs : ic->ic_bss->ni_txmcs;
-    data->nss = fHalService->getDriverInfo()->getTxNSS();
+    data->nss = nss > 0 ? nss : fHalService->getDriverInfo()->getTxNSS();
+    LINK_TRACE("mcs %u nss %u gi %u curmode %d", data->index, data->nss, data->guard_interval, ic->ic_curmode);
     switch (ic->ic_bss->ni_chw) {
         case IEEE80211_CHAN_WIDTH_40:
             data->bw = 40;
@@ -651,9 +666,42 @@ getRATE(struct apple80211_rate_data *rd)
             rd->rate[0] = ieee80211_std_ratesets_11n[index].rates[ic->ic_bss->ni_txmcs % 8] / 2;
         } else
             rd->rate[0] = ic->ic_bss->ni_rates.rs_rates[ic->ic_bss->ni_txrate];
+        LINK_TRACE("rate %u (rx %u kbps)", rd->rate[0], rx_kbps);
         return kIOReturnSuccess;
     }
     return 6;
+}
+
+IOReturn AirportItlwmSkywalkInterface::
+getGUARD_INTERVAL(struct apple80211_guard_interval_data *gd)
+{
+    struct ieee80211com *ic = fHalService->get80211Controller();
+    if (ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL)
+        return 6;
+    int sgi = fHalService->getDriverInfo()->getRxRateSgi();	/* the last frame's GI, else the capability */
+    if (sgi < 0)
+        sgi = ieee80211_node_supports_sgi(ic->ic_bss);
+    memset(gd, 0, sizeof(*gd));
+    gd->version = APPLE80211_VERSION;
+    gd->interval = sgi ? APPLE80211_GI_SHORT : APPLE80211_GI_LONG;
+    LINK_TRACE("gi %u", gd->interval);
+    return kIOReturnSuccess;
+}
+
+/* The last received data frame's rate, where the HAL tracks it. */
+IOReturn AirportItlwmSkywalkInterface::
+getRX_RATE(struct apple80211_rate_data *rd)
+{
+    struct ieee80211com *ic = fHalService->get80211Controller();
+    uint32_t rx_kbps = fHalService->getDriverInfo()->getRxRateKbps();
+    if (ic->ic_state != IEEE80211_S_RUN || rx_kbps == 0)
+        return 6;
+    memset(rd, 0, sizeof(*rd));
+    rd->version = APPLE80211_VERSION;
+    rd->num_radios = 1;
+    rd->rate[0] = (rx_kbps + 500) / 1000;
+    LINK_TRACE("rate %u", rd->rate[0]);
+    return kIOReturnSuccess;
 }
 
 IOReturn AirportItlwmSkywalkInterface::
@@ -680,7 +728,7 @@ getRSSI(struct apple80211_rssi_data *rd)
         rd->rssi[0] = rd->aggregate_rssi
         = rd->rssi_ext[0]
         = rd->aggregate_rssi_ext
-        = -(0 - IWM_MIN_DBM - ic->ic_bss->ni_rssi);
+        = (int8_t)ic->ic_bss->ni_rssi;	/* qwz stores dBm, not iwm's offset from -100 */
         return kIOReturnSuccess;
     }
     return 6;
@@ -773,7 +821,9 @@ getNSS(struct apple80211_nss_data *data)
 {
     memset(data, 0, sizeof(*data));
     data->version = APPLE80211_VERSION;
-    data->nss = fHalService->getDriverInfo()->getTxNSS();
+    int nss = fHalService->getDriverInfo()->getRxRateNss();
+    data->nss = nss > 0 ? nss : fHalService->getDriverInfo()->getTxNSS();
+    LINK_TRACE("nss %u", data->nss);
     return kIOReturnSuccess;
 }
 
@@ -932,6 +982,7 @@ getMCS(struct apple80211_mcs_data* md)
     md->version = APPLE80211_VERSION;
     int mcs = fHalService->getDriverInfo()->getRxRateMcs();
     md->index = mcs >= 0 ? mcs : ic->ic_bss->ni_txmcs;
+    LINK_TRACE("mcs %u", md->index);
     return kIOReturnSuccess;
 }
 
@@ -949,7 +1000,7 @@ getLINK_CHANGED_EVENT_DATA(struct apple80211_link_changed_event_data *ed)
         ed->voluntary = disassocIsVoluntary;
         ed->reason = APPLE80211_LINK_DOWN_REASON_DEAUTH;
     } else
-        ed->rssi = -(0 - IWM_MIN_DBM - ic->ic_bss->ni_rssi);
+        ed->rssi = (int8_t)ic->ic_bss->ni_rssi;	/* dBm */
     XYLog("Link %s, reason: %d, voluntary: %d\n", ed->isLinkDown ? "down" : "up", ed->reason, ed->voluntary);
     return kIOReturnSuccess;
 }
@@ -1011,7 +1062,7 @@ static int convertNodeToScanResult(ItlHalService *fHalService, struct ieee80211_
     result->asr_channel.channel = ieee80211_chan2ieee(fHalService->get80211Controller(), fNextNodeToSend->ni_chan);
     result->asr_channel.flags = ieeeChanFlag2appleScanFlagVentura(fNextNodeToSend->ni_chan->ic_flags);
     result->asr_noise = -fHalService->getDriverInfo()->getBSSNoise();
-    result->asr_rssi = -(0 - IWM_MIN_DBM - fNextNodeToSend->ni_rssi);
+    result->asr_rssi = (int8_t)fNextNodeToSend->ni_rssi;	/* dBm */
     memcpy(result->asr_bssid, fNextNodeToSend->ni_bssid, IEEE80211_ADDR_LEN);
     result->asr_ssid_len = fNextNodeToSend->ni_esslen;
     if (result->asr_ssid_len != 0)

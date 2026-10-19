@@ -999,7 +999,15 @@ u_int8_t *
 ieee80211_add_rsn_body(u_int8_t *frm, struct ieee80211com *ic,
     const struct ieee80211_node *ni, int wpa)
 {
-	const u_int8_t *oui = wpa ? MICROSOFT_OUI : IEEE80211_OUI;
+	/*
+	 * Not the IEEE80211_OUI/MICROSOFT_OUI compound literals: compiled as
+	 * C++ they die at the end of the initialiser, and the optimised
+	 * build then copies whatever is on the stack into the suite OUIs
+	 * (the AP answers "invalid IE").
+	 */
+	static const u_int8_t rsn_oui[] = { 0x00, 0x0f, 0xac };
+	static const u_int8_t wpa_oui[] = { 0x00, 0x50, 0xf2 };
+	const u_int8_t *oui = wpa ? wpa_oui : rsn_oui;
 	u_int8_t *pcount;
     u_int16_t count, rsncaps;
 

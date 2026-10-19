@@ -4256,6 +4256,19 @@ struct wmi_unit_test_cmd {
 #define WMI_PEER_NEED_GTK_2_WAY	0x00000010
 #define WMI_PEER_HE		0x00000400
 #define WMI_PEER_APSD		0x00000800
+/* HT capability bits in the WMI service-ready / mac_phy caps (ath12k wmi.h). */
+#define WMI_HT_CAP_ENABLED		0x0001
+#define WMI_HT_CAP_HT20_SGI		0x0002
+#define WMI_HT_CAP_DYNAMIC_SMPS		0x0004
+#define WMI_HT_CAP_TX_STBC		0x0008
+#define WMI_HT_CAP_RX_STBC		0x0030
+#define WMI_HT_CAP_RX_STBC_MASK_SHIFT	4
+#define WMI_HT_CAP_LDPC			0x0040
+#define WMI_HT_CAP_L_SIG_TXOP_PROT	0x0080
+#define WMI_HT_CAP_HT40_SGI		0x0800
+#define WMI_HT_CAP_RX_LDPC		0x1000
+#define WMI_HT_CAP_TX_LDPC		0x2000
+
 #define WMI_PEER_HT		0x00001000
 #define WMI_PEER_40MHZ		0x00002000
 #define WMI_PEER_STBC		0x00008000

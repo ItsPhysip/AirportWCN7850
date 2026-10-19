@@ -170,11 +170,8 @@ public:
     void watchdogAction(IOTimerEventSource *timer);
     
     virtual SInt32 enableFeature(IO80211FeatureCode, void*) override;
-    virtual bool isCommandProhibited(int command) override {
-//        if (!ml_at_interrupt_context())
-//            XYLog("%s %s\n", __FUNCTION__, convertApple80211IOCTLToString(command));
-        return false;
-    };
+    /* Every request the family does not answer itself passes here first; the first of each id is logged. */
+    virtual bool isCommandProhibited(int command) override;
     virtual SInt32 handleCardSpecific(IO80211SkywalkInterface *,unsigned long,void *,bool) override {
         XYLog("%s\n", __FUNCTION__);
         return 0;

@@ -129,6 +129,16 @@ void qwz_core_init_cleanup(struct qwz_softc *, int);
 int qwz_qmi_event_server_arrive(struct qwz_softc *);
 int qwz_mac_register(struct qwz_softc *);
 int qwz_mac_start(struct qwz_softc *);
+void qwz_mac_setup_ht_vht_cap(struct qwz_softc *, struct qwz_pdev *);
+uint32_t qwz_vht80_center_freq(uint32_t);
+int qwz_node_ht40(struct qwz_softc *, struct ieee80211_node *);
+int qwz_vdev_width(struct qwz_vif *);
+void qwz_mac_vdev_chan_args(struct qwz_softc *, struct ieee80211_node *,
+    struct wmi_vdev_start_req_arg *);
+int qwz_mac_vdev_restart(struct qwz_softc *, struct qwz_vif *, int);
+int qwz_mac_set_txbf_conf(struct qwz_softc *, struct qwz_vif *, int);
+void qwz_peer_assoc_h_vht(struct qwz_softc *, struct ieee80211_node *,
+    struct peer_assoc_params *);
 void qwz_mac_scan_finish(struct qwz_softc *);
 int qwz_mac_mgmt_tx_wmi(struct qwz_softc *, struct qwz_vif *, uint8_t,
     struct ieee80211_node *, struct mbuf *);
@@ -180,10 +190,30 @@ int
 qwz_bgscan(struct ieee80211com *ic)
 {
 	struct qwz_softc *sc = (struct qwz_softc *)ic->ic_softc;
+	enum ieee80211_phymode mode = (enum ieee80211_phymode)ic->ic_curmode;
+	static int traced;
+	int ret;
 
 	if (sc->scan.state != ATH12K_SCAN_IDLE)
 		return EBUSY;
-	return qwz_scan(sc);
+	ret = qwz_scan(sc);
+	/*
+	 * qwz_scan() switches to AUTO so a scan from an unassociated
+	 * state covers every channel; here the link is up and the mode
+	 * negotiated at association (11ac/11n) must survive the scan,
+	 * as iwm's bgscan leaves it alone. The firmware scans all bands
+	 * regardless, and ieee80211_end_scan() keeps the current AP.
+	 */
+	if (ret == 0 && mode != IEEE80211_MODE_AUTO &&
+	    ic->ic_curmode != mode) {
+		ieee80211_setmode(ic, mode);
+		if (traced < 4) {
+			traced++;
+			printf("%s: background scan keeps phy mode %d\n",
+			    sc->sc_dev.dv_xname, ic->ic_curmode);
+		}
+	}
+	return ret;
 }
 
 void
@@ -1501,6 +1531,13 @@ qwz_hw_wcn7850_rx_desc_get_msdu_nss(struct hal_rx_desc *desc)
 }
 
 uint8_t
+qwz_hw_wcn7850_rx_desc_get_msdu_rssi(struct hal_rx_desc *desc)
+{
+	return FIELD_GET(RX_MSDU_END_INFO12_USER_RSSI,
+	    le32toh(desc->u.wcn7850.msdu_end.info12));
+}
+
+uint8_t
 qwz_hw_wcn7850_rx_desc_get_mpdu_tid(struct hal_rx_desc *desc)
 {
 	return FIELD_GET(RX_MPDU_START_INFO2_TID,
@@ -1991,11 +2028,10 @@ const struct hal_rx_ops hal_rx_wcn7850_ops = {
 	.rx_desc_get_mpdu_start_seq_no = qwz_hw_wcn7850_rx_desc_get_mpdu_start_seq_no,
 	.rx_desc_get_mpdu_fc_valid = qwz_hw_wcn7850_rx_desc_get_mpdu_fc_valid,
 	.rx_desc_get_msdu_len = qwz_hw_wcn7850_rx_desc_get_msdu_len,
-#ifdef notyet
 	.rx_desc_get_msdu_sgi = qwz_hw_wcn7850_rx_desc_get_msdu_sgi,
 	.rx_desc_get_msdu_rx_bw = qwz_hw_wcn7850_rx_desc_get_msdu_rx_bw,
-#endif
 	.rx_desc_get_msdu_rate_mcs = qwz_hw_wcn7850_rx_desc_get_msdu_rate_mcs,
+	.rx_desc_get_msdu_rssi = qwz_hw_wcn7850_rx_desc_get_msdu_rssi,
 	.rx_desc_get_msdu_freq = qwz_hw_wcn7850_rx_desc_get_msdu_freq,
 	.rx_desc_get_msdu_pkt_type = qwz_hw_wcn7850_rx_desc_get_msdu_pkt_type,
 	.rx_desc_get_msdu_nss = qwz_hw_wcn7850_rx_desc_get_msdu_nss,
@@ -11262,6 +11298,7 @@ qwz_init_channels_world(struct qwz_softc *sc)
 			chan->ic_flags = IEEE80211_CHAN_A |
 			    IEEE80211_CHAN_40MHZ |
 			    IEEE80211_CHAN_HT |
+			    IEEE80211_CHAN_VHT80 |
 			    IEEE80211_CHAN_PASSIVE;
 		}
 	}
@@ -11349,6 +11386,10 @@ qwz_init_channels(struct qwz_softc *sc, struct cur_regulatory_info *reg_info)
 				if ((rule->flags & REGULATORY_CHAN_NO_HT40) == 0)
 					chan->ic_flags |=
 					    IEEE80211_CHAN_40MHZ;
+				if ((rule->flags & REGULATORY_CHAN_NO_80MHZ) == 0 &&
+				    (rule->max_bw == 0 || rule->max_bw >= 80))
+					chan->ic_flags |=
+					    IEEE80211_CHAN_VHT80;
 				if (rule->flags & (REGULATORY_CHAN_RADAR |
 				    REGULATORY_CHAN_NO_IR |
 				    REGULATORY_CHAN_INDOOR_ONLY)) {
@@ -14756,7 +14797,8 @@ qwz_dp_tx_complete_msdu(struct qwz_softc *sc, struct dp_tx_ring *tx_ring,
 		if (qwz_mac_hw_ratecode_to_legacy_rate(tx_data->ni, mcs, pkt_type,
 		    &rateidx, &rate) == 0)
 			tx_data->ni->ni_txrate = rateidx;
-	} else if (pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11N)
+	} else if (pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11N ||
+	    pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11AC)
 		tx_data->ni->ni_txmcs = mcs;
 
 	if (ts->status == HAL_WBM_TQM_REL_REASON_FRAME_ACKED &&
@@ -15388,11 +15430,86 @@ qwz_dp_rx_msdu_coalesce(struct qwz_softc *sc, struct qwz_rx_msdu_list *msdu_list
 	return ENOTSUP;
 }
 
+/*
+ * RSSI and rate of a received frame, from its RX descriptor. The RSSI goes
+ * to net80211 through rxi (ni_rssi holds dBm in this driver); the rate of
+ * the last unicast data frame stays in the softc for the HAL's link
+ * display, as the firmware reports no TX rate.
+ */
 void
 qwz_dp_rx_h_rate(struct qwz_softc *sc, struct hal_rx_desc *rx_desc,
     struct ieee80211_rxinfo *rxi)
 {
-	/* TODO */
+	/* MCS 0-9 at 20 MHz, one stream, long GI, in kbit/s. */
+	static const uint32_t mcs_kbps[] = { 6500, 13000, 19500, 26000,
+	    39000, 52000, 58500, 65000, 78000, 86700 };
+	/* Data subcarriers at 20/40/80/160 MHz. */
+	static const uint16_t bw_nsd[] = { 52, 108, 234, 468 };
+	struct rx_mpdu_start_qcn9274 *mpdu = &rx_desc->u.wcn7850.mpdu_start;
+	uint8_t pkt_type, mcs, nss, bw, sgi, rssi;
+	int8_t rssi_dbm;
+	uint32_t kbps;
+
+	rssi = sc->hal_rx_ops->rx_desc_get_msdu_rssi(rx_desc);
+	if (rssi != 0) {
+		rssi_dbm = (int8_t)rssi;
+		if (!isset(sc->wmi.svc_map,
+		    WMI_TLV_SERVICE_HW_DB2DBM_CONVERSION_SUPPORT))
+			rssi_dbm += ATH12K_DEFAULT_NOISE_FLOOR;
+		sc->sc_rx_rssi = rssi_dbm;
+	}
+	/* A descriptor without one keeps the last value instead of zeroing ni_rssi. */
+	rxi->rxi_rssi = sc->sc_rx_rssi;
+
+	/* Group-addressed frames come at legacy rates: not the link rate. */
+	if (mpdu->addr1[0] & 0x01)
+		return;
+
+	pkt_type = sc->hal_rx_ops->rx_desc_get_msdu_pkt_type(rx_desc);
+	mcs = sc->hal_rx_ops->rx_desc_get_msdu_rate_mcs(rx_desc);
+	nss = hweight8(sc->hal_rx_ops->rx_desc_get_msdu_nss(rx_desc));
+	bw = sc->hal_rx_ops->rx_desc_get_msdu_rx_bw(rx_desc);
+	sgi = sc->hal_rx_ops->rx_desc_get_msdu_sgi(rx_desc);
+
+	switch (pkt_type) {
+	case HAL_TX_RATE_STATS_PKT_TYPE_11A:
+	case HAL_TX_RATE_STATS_PKT_TYPE_11B: {
+		uint8_t rateidx;
+		uint16_t rate = 0;
+
+		/* The rate is set for every known code, in the rate set or not. */
+		if (sc->sc_ic.ic_bss == NULL)
+			return;
+		qwz_mac_hw_ratecode_to_legacy_rate(sc->sc_ic.ic_bss, mcs,
+		    pkt_type, &rateidx, &rate);
+		if (rate == 0)
+			return;
+		sc->sc_rx_rate_kbps = rate * 500;
+		sc->sc_rx_rate_mcs = -1;
+		sc->sc_rx_rate_nss = 1;
+		sc->sc_rx_rate_sgi = 0;
+		return;
+	}
+	case HAL_TX_RATE_STATS_PKT_TYPE_11N:
+		/* HT: MCS 0-7 per stream; the MCS index counts the streams. */
+		if (mcs > 7 || nss == 0 || bw > RX_MSDU_START_RECV_BW_40MHZ)
+			return;
+		sc->sc_rx_rate_mcs = mcs + 8 * (nss - 1);
+		break;
+	case HAL_TX_RATE_STATS_PKT_TYPE_11AC:
+		if (mcs > 9 || nss == 0 || bw > RX_MSDU_START_RECV_BW_160MHZ)
+			return;
+		sc->sc_rx_rate_mcs = mcs;
+		break;
+	default:
+		return;	/* 11ax/11be are not driven */
+	}
+	kbps = mcs_kbps[mcs] * nss * bw_nsd[bw] / 52;
+	if (sgi == RX_MSDU_START_SGI_0_4_US)
+		kbps = kbps * 10 / 9;
+	sc->sc_rx_rate_kbps = kbps;
+	sc->sc_rx_rate_nss = nss;
+	sc->sc_rx_rate_sgi = (sgi == RX_MSDU_START_SGI_0_4_US);
 }
 
 void
@@ -21875,6 +21992,106 @@ fail:
 	return ret;
 }
 
+/*
+ * macOS: advertise the HT extras and the 802.11ac (VHT) capabilities the
+ * firmware reports, as ath12k_mac_setup_ht_vht_cap() does for mac80211.
+ * OpenBSD's net80211 has no VHT station support; itlwm's does.  Called once
+ * the chain masks are known.  VHT160 and 80+80 stay off, as in ath12k.
+ */
+void
+qwz_mac_setup_ht_vht_cap(struct qwz_softc *sc, struct qwz_pdev *pdev)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ath12k_pdev_cap *cap = &pdev->cap;
+	uint32_t ht_cap = 0, vht_cap = cap->vht_cap, stbc;
+	uint16_t rxmcs_map = 0, txmcs_map = 0;
+	int i, subfer, subfee, sound_dim;
+
+	if (cap->supported_bands & WMI_HOST_WLAN_5G_CAP)
+		ht_cap = cap->band[1].ht_cap_info;
+	else if (cap->supported_bands & WMI_HOST_WLAN_2G_CAP)
+		ht_cap = cap->band[0].ht_cap_info;
+
+	ic->ic_htcaps &= ~(IEEE80211_HTCAP_LDPC | IEEE80211_HTCAP_TXSTBC |
+	    IEEE80211_HTCAP_RXSTBC_MASK);
+	if (ht_cap & WMI_HT_CAP_RX_LDPC)
+		ic->ic_htcaps |= IEEE80211_HTCAP_LDPC;
+	if ((ht_cap & WMI_HT_CAP_TX_STBC) && sc->num_tx_chains > 1)
+		ic->ic_htcaps |= IEEE80211_HTCAP_TXSTBC;
+	if (ht_cap & WMI_HT_CAP_RX_STBC) {
+		stbc = (ht_cap & WMI_HT_CAP_RX_STBC) >>
+		    WMI_HT_CAP_RX_STBC_MASK_SHIFT;
+		ic->ic_htcaps |= (stbc << IEEE80211_HTCAP_RXSTBC_SHIFT) &
+		    IEEE80211_HTCAP_RXSTBC_MASK;
+	}
+
+	ic->ic_vhtcaps = 0;
+	ic->ic_flags &= ~IEEE80211_F_VHTON;
+	if ((cap->supported_bands & WMI_HOST_WLAN_5G_CAP) == 0 ||
+	    vht_cap == 0) {
+		printf("%s: no 802.11ac capability reported (bands 0x%x)\n",
+		    sc->sc_dev.dv_xname, cap->supported_bands);
+		return;
+	}
+
+	/* ath12k_set_vht_txbf_cap() */
+	subfer = !!(vht_cap & IEEE80211_VHTCAP_SU_BEAMFORMER_CAPABLE);
+	subfee = !!(vht_cap & IEEE80211_VHTCAP_SU_BEAMFORMEE_CAPABLE);
+	if (sc->num_tx_chains < 2) {
+		vht_cap &= ~IEEE80211_VHTCAP_SU_BEAMFORMER_CAPABLE;
+		subfer = 0;
+	}
+	if (!subfer)
+		vht_cap &= ~IEEE80211_VHTCAP_MU_BEAMFORMER_CAPABLE;
+	if (!subfee)
+		vht_cap &= ~IEEE80211_VHTCAP_MU_BEAMFORMEE_CAPABLE;
+	sound_dim = (vht_cap & IEEE80211_VHTCAP_SOUNDING_DIMENSIONS_MASK) >>
+	    IEEE80211_VHTCAP_SOUNDING_DIMENSIONS_SHIFT;
+	vht_cap &= ~IEEE80211_VHTCAP_SOUNDING_DIMENSIONS_MASK;
+	if (subfer) {
+		if (sound_dim > sc->num_tx_chains - 1)
+			sound_dim = sc->num_tx_chains - 1;
+		vht_cap |= sound_dim <<
+		    IEEE80211_VHTCAP_SOUNDING_DIMENSIONS_SHIFT;
+	}
+	if (!subfee)
+		vht_cap &= ~IEEE80211_VHTCAP_BEAMFORMEE_STS_MASK;
+
+	/* ath12k_create_vht_cap(): VHT160 and VHT80+80 disabled. */
+	vht_cap &= ~IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_MASK;
+	vht_cap &= ~IEEE80211_VHTCAP_SHORT_GI_160;
+	if (sc->num_tx_chains <= 1)
+		vht_cap &= ~IEEE80211_VHTCAP_TXSTBC;
+
+	for (i = 0; i < 8; i++) {
+		txmcs_map |= (i < sc->num_tx_chains ?
+		    IEEE80211_VHT_MCS_SUPPORT_0_9 :
+		    IEEE80211_VHT_MCS_NOT_SUPPORTED) << (i * 2);
+		rxmcs_map |= (i < sc->num_rx_chains ?
+		    IEEE80211_VHT_MCS_SUPPORT_0_9 :
+		    IEEE80211_VHT_MCS_NOT_SUPPORTED) << (i * 2);
+	}
+
+	ic->ic_vhtcaps = vht_cap;
+	ic->ic_vht_rx_mcs_map = htole16(rxmcs_map);
+	ic->ic_vht_tx_mcs_map = htole16(txmcs_map);
+	ic->ic_vht_rx_highest = 0;
+	ic->ic_vht_tx_highest = 0;
+	memset(ic->ic_vht_sup_mcs, 0, sizeof(ic->ic_vht_sup_mcs));
+	for (i = 0; i < sc->num_rx_chains && i < nitems(ic->ic_vht_sup_mcs);
+	    i++)
+		ic->ic_vht_sup_mcs[i] = 0x03ff;	/* MCS 0-9 */
+
+	if ((ic->ic_userflags & IEEE80211_F_NOVHT) == 0)
+		ic->ic_flags |= IEEE80211_F_VHTON;
+
+	printf("%s: 802.11ac: fw ht_cap 0x%x vht_cap 0x%x -> htcaps 0x%x "
+	    "vhtcaps 0x%x, %d tx / %d rx chains%s\n", sc->sc_dev.dv_xname,
+	    ht_cap, cap->vht_cap, ic->ic_htcaps, ic->ic_vhtcaps,
+	    sc->num_tx_chains, sc->num_rx_chains,
+	    (ic->ic_flags & IEEE80211_F_VHTON) ? "" : " (disabled: -novht)");
+}
+
 int
 qwz_mac_op_start(struct qwz_pdev *pdev)
 {
@@ -21939,6 +22156,8 @@ qwz_mac_op_start(struct qwz_pdev *pdev)
 		ic->ic_sup_mcs[2] = 0xff;	/* MCS 16-23 */
 	if (sc->num_rx_chains > 3)
 		ic->ic_sup_mcs[3] = 0xff;	/* MCS 24-31 */
+
+	qwz_mac_setup_ht_vht_cap(sc, pdev);	/* macOS: 11ac */
 
 	/* TODO: Do we need to enable ANI? */
 
@@ -22108,10 +22327,46 @@ qwz_mac_vdev_setup_sync(struct qwz_softc *sc)
 }
 
 int
-qwz_mac_set_txbf_conf(struct qwz_vif *arvif)
+qwz_mac_set_txbf_conf(struct qwz_softc *sc, struct qwz_vif *arvif,
+    int pdev_id)
 {
-	/* TX beamforming is not yet supported. */
-	return 0;
+	uint32_t vht_cap = sc->pdevs[0].cap.vht_cap;
+	uint32_t value = 0;
+	int nsts, sound_dim;
+
+	/* ath12k_mac_set_txbf_conf(), station vdev. */
+	if (vht_cap & IEEE80211_VHTCAP_SU_BEAMFORMEE_CAPABLE) {
+		nsts = (vht_cap & IEEE80211_VHTCAP_BEAMFORMEE_STS_MASK) >>
+		    IEEE80211_VHTCAP_BEAMFORMEE_STS_SHIFT;
+		value |= FIELD_PREP(WMI_TXBF_STS_CAP_OFFSET_MASK, nsts);
+	}
+
+	if (vht_cap & IEEE80211_VHTCAP_SU_BEAMFORMER_CAPABLE) {
+		sound_dim = (vht_cap &
+		    IEEE80211_VHTCAP_SOUNDING_DIMENSIONS_MASK) >>
+		    IEEE80211_VHTCAP_SOUNDING_DIMENSIONS_SHIFT;
+		if (sound_dim > sc->num_tx_chains - 1)
+			sound_dim = sc->num_tx_chains - 1;
+		value |= FIELD_PREP(WMI_BF_SOUND_DIM_OFFSET_MASK, sound_dim);
+	}
+
+	if (!value)
+		return 0;
+
+	if (vht_cap & IEEE80211_VHTCAP_SU_BEAMFORMER_CAPABLE)
+		value |= WMI_VDEV_PARAM_TXBF_SU_TX_BFER;
+
+	if (vht_cap & IEEE80211_VHTCAP_SU_BEAMFORMEE_CAPABLE) {
+		value |= WMI_VDEV_PARAM_TXBF_SU_TX_BFEE;
+		if (vht_cap & IEEE80211_VHTCAP_MU_BEAMFORMEE_CAPABLE)
+			value |= WMI_VDEV_PARAM_TXBF_MU_TX_BFEE;
+	}
+
+	DNPRINTF(QWZ_D_MAC, "%s: vdev %d txbf 0x%x\n", __func__,
+	    arvif->vdev_id, value);
+
+	return qwz_wmi_vdev_set_param_cmd(sc, arvif->vdev_id, pdev_id,
+	    WMI_VDEV_PARAM_TXBF, value);
 }
 
 int
@@ -22158,6 +22413,154 @@ qwz_mac_vdev_stop(struct qwz_softc *sc, struct qwz_vif *arvif, int pdev_id)
 	return 0;
 }
 
+/*
+ * Centre frequency of the 80 MHz block that holds a 5 GHz primary channel,
+ * for the case where net80211 recorded none.
+ */
+uint32_t
+qwz_vht80_center_freq(uint32_t freq)
+{
+	int chan = (freq - 5000) / 5, base;
+
+	if (chan >= 149)
+		base = 149 + ((chan - 149) / 16) * 16;
+	else
+		base = 36 + ((chan - 36) / 16) * 16;
+	return 5000 + (base + 6) * 5;
+}
+
+/*
+ * Channel width (MHz) the vdev was started with; 0 when it is not running.
+ */
+int
+qwz_vdev_width(struct qwz_vif *arvif)
+{
+	if (!arvif->is_started)
+		return 0;
+	switch (arvif->chan_mode) {
+	case MODE_11AC_VHT80:
+	case MODE_11AC_VHT80_2G:
+	case MODE_11AC_VHT80_80:
+	case MODE_11AC_VHT160:
+		return 80;
+	case MODE_11NA_HT40:
+	case MODE_11NG_HT40:
+	case MODE_11AC_VHT40:
+	case MODE_11AC_VHT40_2G:
+		return 40;
+	default:
+		return 20;
+	}
+}
+
+/*
+ * Whether the BSS runs 40 MHz for us: the negotiated width once HT has
+ * been negotiated, the HT operation element's secondary channel offset
+ * before that (peer assoc runs before the association response too).
+ */
+int
+qwz_node_ht40(struct qwz_softc *sc, struct ieee80211_node *ni)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	uint8_t sco;
+
+	if (ni->ni_flags & (IEEE80211_NODE_HT | IEEE80211_NODE_VHT))
+		return ni->ni_chw == IEEE80211_CHAN_WIDTH_40;
+	if (ic->ic_userflags & IEEE80211_F_NOHT40)
+		return 0;
+	if (!IEEE80211_CHAN_40MHZ_ALLOWED(ni->ni_chan) ||
+	    !ieee80211_node_supports_ht_chan40(ni))
+		return 0;
+	sco = ni->ni_htop0 & IEEE80211_HTOP0_SCO_MASK;
+	return (sco == IEEE80211_HTOP0_SCO_SCA ||
+	    sco == IEEE80211_HTOP0_SCO_SCB);
+}
+
+/*
+ * Fill in the channel part of a vdev start request from the BSS node:
+ * frequency, centre frequencies and WMI phy mode.  Also used by qwz_run()
+ * to see whether the running vdev needs a restart after association
+ * settled the channel width (VHT80 is only negotiated there).
+ */
+void
+qwz_mac_vdev_chan_args(struct qwz_softc *sc, struct ieee80211_node *ni,
+    struct wmi_vdev_start_req_arg *arg)
+{
+	struct ieee80211_channel *chan = ni->ni_chan;
+	uint32_t cf40 = chan->ic_freq;
+	uint8_t sco = IEEE80211_HTOP0_SCO_SCN;
+	int ht40 = 0;
+
+	arg->channel.freq = chan->ic_freq;
+	arg->channel.band_center_freq1 = chan->ic_freq;
+	arg->channel.band_center_freq2 = chan->ic_freq;
+	arg->channel.allow_ht = false;
+	arg->channel.allow_vht = false;
+
+	if (qwz_node_ht40(sc, ni)) {
+		sco = ni->ni_htop0 & IEEE80211_HTOP0_SCO_MASK;
+		if (sco == IEEE80211_HTOP0_SCO_SCA) {
+			cf40 = chan->ic_freq + 10;
+			ht40 = 1;
+		} else if (sco == IEEE80211_HTOP0_SCO_SCB) {
+			cf40 = chan->ic_freq - 10;
+			ht40 = 1;
+		}
+	}
+
+	if ((ni->ni_flags & IEEE80211_NODE_VHT) &&
+	    IEEE80211_IS_CHAN_5GHZ(chan) &&
+	    (chan->ic_flags & IEEE80211_CHAN_VHT)) {
+		arg->channel.allow_ht = true;
+		arg->channel.allow_vht = true;
+		switch (ni->ni_chw) {
+		case IEEE80211_CHAN_WIDTH_80:
+		case IEEE80211_CHAN_WIDTH_80P80:
+		case IEEE80211_CHAN_WIDTH_160:
+			/* VHT160/80+80 are not advertised: stay in the
+			 * 80 MHz segment that holds the primary channel. */
+			arg->channel.mode = MODE_11AC_VHT80;
+			if (chan->ic_center_freq1 == 0)
+				arg->channel.band_center_freq1 =
+				    qwz_vht80_center_freq(chan->ic_freq);
+			else if (ni->ni_chw == IEEE80211_CHAN_WIDTH_160)
+				arg->channel.band_center_freq1 =
+				    chan->ic_freq > chan->ic_center_freq1 ?
+				    chan->ic_center_freq1 + 40 :
+				    chan->ic_center_freq1 - 40;
+			else
+				arg->channel.band_center_freq1 =
+				    chan->ic_center_freq1;
+			break;
+		case IEEE80211_CHAN_WIDTH_40:
+			if (ht40) {
+				arg->channel.mode = MODE_11AC_VHT40;
+				arg->channel.band_center_freq1 = cf40;
+			} else
+				arg->channel.mode = MODE_11AC_VHT20;
+			break;
+		default:
+			arg->channel.mode = MODE_11AC_VHT20;
+			break;
+		}
+	} else if (ieee80211_node_supports_ht(ni) &&
+	    (chan->ic_flags & IEEE80211_CHAN_HT)) {
+		arg->channel.allow_ht = true;
+		if (ht40) {
+			arg->channel.band_center_freq1 = cf40;
+			arg->channel.mode = IEEE80211_IS_CHAN_5GHZ(chan) ?
+			    MODE_11NA_HT40 : MODE_11NG_HT40;
+		} else
+			arg->channel.mode = IEEE80211_IS_CHAN_5GHZ(chan) ?
+			    MODE_11NA_HT20 : MODE_11NG_HT20;
+	} else if (IEEE80211_IS_CHAN_5GHZ(chan))
+		arg->channel.mode = MODE_11A;
+	else if (ni->ni_flags & IEEE80211_NODE_ERP)
+		arg->channel.mode = MODE_11G;
+	else
+		arg->channel.mode = MODE_11B;
+}
+
 int
 qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
     int pdev_id, int restart)
@@ -22165,7 +22568,6 @@ qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_channel *chan = ic->ic_bss->ni_chan;
 	struct wmi_vdev_start_req_arg arg = {};
-	uint8_t sco = IEEE80211_HTOP0_SCO_SCN;
 	int ret = 0;
 #ifdef notyet
 	lockdep_assert_held(&ar->conf_mutex);
@@ -22177,34 +22579,7 @@ qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
 	arg.dtim_period = ic->ic_dtim_period;
 	arg.bcn_intval = ic->ic_lintval;
 
-	arg.channel.freq = chan->ic_freq;
-	arg.channel.band_center_freq1 = chan->ic_freq;
-	arg.channel.band_center_freq2 = chan->ic_freq;
-
-	if (ieee80211_node_supports_ht(ic->ic_bss) &&
-	    (chan->ic_flags & IEEE80211_CHAN_HT)) {
-		arg.channel.allow_ht = true;
-		if (IEEE80211_CHAN_40MHZ_ALLOWED(chan) &&
-		    ieee80211_node_supports_ht_chan40(ic->ic_bss))
-			sco = ic->ic_bss->ni_htop0 &
-			    IEEE80211_HTOP0_SCO_MASK;
-		if (sco == IEEE80211_HTOP0_SCO_SCA) {
-			arg.channel.band_center_freq1 = chan->ic_freq + 10;
-			arg.channel.mode = IEEE80211_IS_CHAN_5GHZ(chan) ?
-			    MODE_11NA_HT40 : MODE_11NG_HT40;
-		} else if (sco == IEEE80211_HTOP0_SCO_SCB) {
-			arg.channel.band_center_freq1 = chan->ic_freq - 10;
-			arg.channel.mode = IEEE80211_IS_CHAN_5GHZ(chan) ?
-			    MODE_11NA_HT40 : MODE_11NG_HT40;
-		} else
-			arg.channel.mode = IEEE80211_IS_CHAN_5GHZ(chan) ?
-			    MODE_11NA_HT20 : MODE_11NG_HT20;
-	} else if (IEEE80211_IS_CHAN_5GHZ(chan))
-		arg.channel.mode = MODE_11A;
-	else if (ic->ic_bss->ni_flags & IEEE80211_NODE_ERP)
-		arg.channel.mode = MODE_11G;
-	else
-		arg.channel.mode = MODE_11B;
+	qwz_mac_vdev_chan_args(sc, ic->ic_bss, &arg);
 
 	arg.channel.min_power = 0;
 	arg.channel.max_power = 20; /* XXX */
@@ -22268,6 +22643,8 @@ qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
 	if (!restart)
 		sc->num_started_vdevs++;
 	arvif->is_started = 1;
+	arvif->chan_mode = arg.channel.mode;
+	arvif->chan_cfreq1 = arg.channel.band_center_freq1;
 
 	DNPRINTF(QWZ_D_MAC, "%s: vdev %d started\n", __func__, arvif->vdev_id);
 
@@ -22288,7 +22665,7 @@ qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
 			   arg.channel.freq, arg.vdev_id);
 	}
 #endif
-	ret = qwz_mac_set_txbf_conf(arvif);
+	ret = qwz_mac_set_txbf_conf(sc, arvif, pdev_id);
 	if (ret)
 		printf("%s: failed to set txbf conf for vdev %d: %d\n",
 		    sc->sc_dev.dv_xname, arvif->vdev_id, ret);
@@ -24082,6 +24459,39 @@ qwz_mac_mgmt_tx_wmi(struct qwz_softc *sc, struct qwz_vif *arvif,
 		}
 	}
 
+#ifdef __APPLE__
+	/*
+	 * Trace the (re)association requests we send: when the AP answers
+	 * "invalid information element" (status 40) their bytes are the
+	 * only way to see which element it disliked.
+	 */
+	{
+		struct ieee80211_frame *wh = mtod(m, struct ieee80211_frame *);
+		uint8_t subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
+
+		if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
+		    IEEE80211_FC0_TYPE_MGT &&
+		    (subtype == IEEE80211_FC0_SUBTYPE_ASSOC_REQ ||
+		    subtype == IEEE80211_FC0_SUBTYPE_REASSOC_REQ)) {
+			uint8_t buf[512];
+			char line[3 * 16 + 1];
+			int len = M_PKTLEN(m), off, i, n;
+
+			if (len > (int)sizeof(buf))
+				len = sizeof(buf);
+			m_copydata(m, 0, len, buf);
+			printf("%s: assoc req %d bytes (pkt %d)\n",
+			    sc->sc_dev.dv_xname, len, M_PKTLEN(m));
+			for (off = 0; off < len; off += 16) {
+				for (i = 0, n = 0; i < 16 && off + i < len; i++)
+					n += snprintf(line + n, sizeof(line) - n,
+					    "%02x ", buf[off + i]);
+				printf("%s: assoc req %03x: %s\n",
+				    sc->sc_dev.dv_xname, off, line);
+			}
+		}
+	}
+#endif
 	ret = qwz_wmi_mgmt_send(sc, arvif, pdev_id, buf_id, m, tx_data);
 	if (ret) {
 		printf("%s: failed to send mgmt frame: %d\n",
@@ -24691,6 +25101,21 @@ qwz_auth(struct qwz_softc *sc)
 	ni->ni_txrate = 0;
 
 	/*
+	 * macOS: net80211 only negotiates HT/VHT from the association
+	 * response, but the vdev has to start on the final channel width
+	 * (mac80211 takes it from the beacon's HT/VHT operation elements).
+	 * Run the negotiation now from the elements saved at scan time; the
+	 * association response simply redoes it.  Restarting the vdev later
+	 * instead broke every join (2026-10-19).
+	 */
+	ieee80211_ht_negotiate(ic, ni);
+	ieee80211_vht_negotiate(ic, ni);
+	ieee80211_sta_set_rx_nss(ic, ni);
+	DNPRINTF(QWZ_D_MAC, "%s: pre-auth negotiation: flags 0x%x chw %d "
+	    "center %u rx_nss %d\n", __func__, ni->ni_flags, ni->ni_chw,
+	    ni->ni_chan->ic_center_freq1, ni->ni_rx_nss);
+
+	/*
 	 * Start vdev BEFORE creating the peer.  Linux ath12k starts the
 	 * vdev at chanctx-assignment time, well before any PEER_CREATE.
 	 * If we instead PEER_CREATE first, the FW creates the peer entry
@@ -24837,39 +25262,65 @@ qwz_peer_assoc_h_phymode(struct qwz_softc *sc, struct ieee80211_node *ni,
     struct peer_assoc_params *arg)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
-	enum wmi_phy_mode phymode;
-	uint8_t sco;
+	enum wmi_phy_mode phymode = MODE_UNKNOWN;
+	int width = 20, vdev_width = qwz_vdev_width(&sc->sc_vif);
 
-	switch (ic->ic_curmode) {
-	case IEEE80211_MODE_11A:
-		phymode = MODE_11A;
-		break;
-	case IEEE80211_MODE_11B:
-		phymode = MODE_11B;
-		break;
-	case IEEE80211_MODE_11G:
-		phymode = MODE_11G;
-		break;
-	case IEEE80211_MODE_11N:
-		sco = IEEE80211_HTOP0_SCO_SCN;
-		if (IEEE80211_CHAN_40MHZ_ALLOWED(ni->ni_chan) &&
-		    ieee80211_node_supports_ht_chan40(ni))
-			sco = ni->ni_htop0 & IEEE80211_HTOP0_SCO_MASK;
-		if (sco == IEEE80211_HTOP0_SCO_SCA ||
-		    sco == IEEE80211_HTOP0_SCO_SCB)
-			phymode = IEEE80211_IS_CHAN_5GHZ(ni->ni_chan) ?
-			    MODE_11NA_HT40 : MODE_11NG_HT40;
-		else
-			phymode = IEEE80211_IS_CHAN_5GHZ(ni->ni_chan) ?
-			    MODE_11NA_HT20 : MODE_11NG_HT20;
-		break;
-	default:
-		phymode = MODE_UNKNOWN;
-		break;
+	/* The width net80211 negotiated, never wider than the running vdev. */
+	if (ni->ni_flags & (IEEE80211_NODE_HT | IEEE80211_NODE_VHT)) {
+		switch (ni->ni_chw) {
+		case IEEE80211_CHAN_WIDTH_80:
+		case IEEE80211_CHAN_WIDTH_80P80:
+		case IEEE80211_CHAN_WIDTH_160:
+			width = 80;	/* VHT160/80+80 are not advertised */
+			break;
+		case IEEE80211_CHAN_WIDTH_40:
+			width = qwz_node_ht40(sc, ni) ? 40 : 20;
+			break;
+		default:
+			width = 20;
+			break;
+		}
+		if (vdev_width != 0 && width > vdev_width)
+			width = vdev_width;
 	}
 
-	DNPRINTF(QWZ_D_MAC, "%s: peer %s phymode %s\n", __func__,
-	    ether_sprintf(ni->ni_macaddr), qwz_wmi_phymode_str(phymode));
+	/* ath12k_peer_assoc_h_phymode(), from what net80211 negotiated. */
+	if (ni->ni_flags & IEEE80211_NODE_VHT) {
+		if (IEEE80211_IS_CHAN_2GHZ(ni->ni_chan))
+			phymode = width >= 40 ? MODE_11AC_VHT40 :
+			    MODE_11AC_VHT20;
+		else if (width >= 80)
+			phymode = MODE_11AC_VHT80;
+		else if (width >= 40)
+			phymode = MODE_11AC_VHT40;
+		else
+			phymode = MODE_11AC_VHT20;
+	} else if (ni->ni_flags & IEEE80211_NODE_HT) {
+		if (IEEE80211_IS_CHAN_5GHZ(ni->ni_chan))
+			phymode = width >= 40 ? MODE_11NA_HT40 : MODE_11NA_HT20;
+		else
+			phymode = width >= 40 ? MODE_11NG_HT40 : MODE_11NG_HT20;
+	} else {
+		/* Legacy peers: the original qwz mapping from ic_curmode. */
+		switch (ic->ic_curmode) {
+		case IEEE80211_MODE_11A:
+			phymode = MODE_11A;
+			break;
+		case IEEE80211_MODE_11B:
+			phymode = MODE_11B;
+			break;
+		case IEEE80211_MODE_11G:
+			phymode = MODE_11G;
+			break;
+		default:
+			phymode = MODE_UNKNOWN;
+			break;
+		}
+	}
+
+	DNPRINTF(QWZ_D_MAC, "%s: peer %s phymode %s (chw %d, width %d, "
+	    "vdev %d)\n", __func__, ether_sprintf(ni->ni_macaddr),
+	    qwz_wmi_phymode_str(phymode), ni->ni_chw, width, vdev_width);
 
 	arg->peer_phymode = phymode;
 }
@@ -24929,8 +25380,10 @@ qwz_peer_assoc_h_ht(struct qwz_softc *sc, struct ieee80211_node *ni,
 
 	if (ni->ni_htcaps & IEEE80211_HTCAP_LDPC)
 		arg->ldpc_flag = true;
-	if (sco == IEEE80211_HTOP0_SCO_SCA ||
-	    sco == IEEE80211_HTOP0_SCO_SCB) {
+	if ((sco == IEEE80211_HTOP0_SCO_SCA ||
+	    sco == IEEE80211_HTOP0_SCO_SCB) &&
+	    (qwz_vdev_width(&sc->sc_vif) == 0 ||
+	    qwz_vdev_width(&sc->sc_vif) >= 40)) {
 		arg->bw_40 = true;
 		arg->peer_rate_caps |= WMI_HOST_RC_CW40_FLAG;
 	}
@@ -24977,6 +25430,87 @@ qwz_peer_assoc_h_ht(struct qwz_softc *sc, struct ieee80211_node *ni,
 	    arg->peer_nss);
 }
 
+/* ath12k: VHT MCS 10/11 are a vendor extension, not 802.11ac; keep them off. */
+#define QWZ_VHT_MCS_SUPPORT_0_11_MASK		0x00ff0000
+#define QWZ_DISABLE_VHT_MCS_SUPPORT_0_11	0x01000000
+
+/* ath12k_peer_assoc_h_vht(), from net80211's negotiated VHT state. */
+void
+qwz_peer_assoc_h_vht(struct qwz_softc *sc, struct ieee80211_node *ni,
+    struct peer_assoc_params *arg)
+{
+	uint16_t rx_mcs_map, tx_mcs_map;
+	uint8_t ampdu_factor, max_nss, mcs;
+	int i;
+
+	if ((ni->ni_flags & IEEE80211_NODE_VHT) == 0)
+		return;
+
+	arg->vht_flag = true;
+	arg->vht_capable = true;
+	if (IEEE80211_IS_CHAN_2GHZ(ni->ni_chan))
+		arg->vht_ng_flag = true;
+	arg->peer_vht_caps = ni->ni_vhtcaps;
+
+	/*
+	 * Some 11ac APs set the VHT A-MPDU length exponent to zero; keep
+	 * the HT value if that is larger.
+	 */
+	ampdu_factor = (ni->ni_vhtcaps &
+	    IEEE80211_VHTCAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK) >>
+	    IEEE80211_VHTCAP_MAX_A_MPDU_LENGTH_EXPONENT_SHIFT;
+	arg->peer_max_mpdu = MAX(arg->peer_max_mpdu,
+	    (1U << (13 + ampdu_factor)) - 1);
+
+	switch (ni->ni_chw) {
+	case IEEE80211_CHAN_WIDTH_80:
+	case IEEE80211_CHAN_WIDTH_80P80:
+	case IEEE80211_CHAN_WIDTH_160:
+		/* 80 MHz in all three cases, if the vdev runs that wide. */
+		if (qwz_vdev_width(&sc->sc_vif) == 0 ||
+		    qwz_vdev_width(&sc->sc_vif) >= 80)
+			arg->bw_80 = true;
+		break;
+	default:
+		break;
+	}
+
+	/* ni_vht_mcsinfo is already the intersection with our own maps. */
+	rx_mcs_map = le16toh(ni->ni_vht_mcsinfo.rx_mcs_map);
+	tx_mcs_map = le16toh(ni->ni_vht_mcsinfo.tx_mcs_map);
+	for (i = 0, max_nss = 0; i < 8; i++) {
+		mcs = (rx_mcs_map >> (2 * i)) & 3;
+		if (mcs != IEEE80211_VHT_MCS_NOT_SUPPORTED)
+			max_nss = i + 1;
+	}
+	if (max_nss == 0)
+		max_nss = 1;
+	if (ni->ni_rx_nss != 0 && ni->ni_rx_nss < max_nss)
+		max_nss = ni->ni_rx_nss;
+	if (sc->num_rx_chains > 0 && max_nss > sc->num_rx_chains)
+		max_nss = sc->num_rx_chains;
+	arg->peer_nss = max_nss;
+
+	arg->rx_max_rate = le16toh(ni->ni_vht_mcsinfo.rx_highest);
+	arg->rx_mcs_set = rx_mcs_map;
+	arg->tx_max_rate = le16toh(ni->ni_vht_mcsinfo.tx_highest);
+	arg->tx_mcs_set = tx_mcs_map;
+	arg->tx_mcs_set &= ~QWZ_VHT_MCS_SUPPORT_0_11_MASK;
+	arg->tx_mcs_set |= QWZ_DISABLE_VHT_MCS_SUPPORT_0_11;
+
+	if ((arg->tx_mcs_set & IEEE80211_VHT_MCS_NOT_SUPPORTED) ==
+	    IEEE80211_VHT_MCS_NOT_SUPPORTED)
+		arg->peer_vht_caps &= ~IEEE80211_VHTCAP_MU_BEAMFORMEE_CAPABLE;
+
+	arg->tx_max_mcs_nss = 0xff;
+
+	DNPRINTF(QWZ_D_MAC, "%s: vht peer %s caps 0x%x max_mpdu %d nss %d "
+	    "rx mcs 0x%x tx mcs 0x%x bw80 %d\n", __func__,
+	    ether_sprintf(ni->ni_macaddr), arg->peer_vht_caps,
+	    arg->peer_max_mpdu, arg->peer_nss, arg->rx_mcs_set,
+	    arg->tx_mcs_set, arg->bw_80);
+}
+
 void
 qwz_peer_assoc_h_qos(struct ieee80211_node *ni, struct peer_assoc_params *arg)
 {
@@ -24998,9 +25532,9 @@ qwz_peer_assoc_prepare(struct qwz_softc *sc, struct qwz_vif *arvif,
 	qwz_peer_assoc_h_rates(ni, arg);
 	qwz_peer_assoc_h_phymode(sc, ni, arg);
 	qwz_peer_assoc_h_ht(sc, ni, arg);
+	qwz_peer_assoc_h_vht(sc, ni, arg);	/* macOS: 11ac */
 	qwz_peer_assoc_h_qos(ni, arg);
 #if 0
-	qwz_peer_assoc_h_vht(sc, arvif, ni, arg);
 	qwz_peer_assoc_h_he(sc, arvif, ni, arg);
 	qwz_peer_assoc_h_he_6ghz(sc, arvif, ni, arg);
 	qwz_peer_assoc_h_smps(ni, arg);
@@ -25238,6 +25772,28 @@ qwz_run(struct qwz_softc *sc)
 	uint8_t pdev_id = 0; /* TODO: derive pdev ID somehow? */
 	struct peer_assoc_params peer_arg;
 	int ret;
+
+	/*
+	 * macOS: the vdev was started in qwz_auth() on the width negotiated
+	 * from the beacon.  If the association response settled on another
+	 * width the peer is capped to the vdev's (qwz_vdev_width); the vdev
+	 * is not restarted.
+	 */
+	if (arvif->is_started) {
+		struct wmi_vdev_start_req_arg chk = {};
+
+		qwz_mac_vdev_chan_args(sc, ni, &chk);
+		if (chk.channel.mode != arvif->chan_mode ||
+		    chk.channel.band_center_freq1 != arvif->chan_cfreq1)
+			printf("%s: vdev %d runs %s center %u, association "
+			    "settled on %s center %u; peer capped\n",
+			    sc->sc_dev.dv_xname, arvif->vdev_id,
+			    qwz_wmi_phymode_str(
+			    (enum wmi_phy_mode)arvif->chan_mode),
+			    arvif->chan_cfreq1,
+			    qwz_wmi_phymode_str(chk.channel.mode),
+			    chk.channel.band_center_freq1);
+	}
 
 	qwz_peer_assoc_prepare(sc, arvif, ni, &peer_arg, 1);
 

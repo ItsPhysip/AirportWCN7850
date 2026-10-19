@@ -39,7 +39,7 @@ build_kext() {
   local fail=0 pids=() s o p l
   for s in $SRCS; do
     o=$OBJ/${s//\//_}.o
-    if [ ! -f "$o" ] || [ "$s" -nt "$o" ] || [ -n "$(find qwz include controller airport itl80211 firmware -name '*.h*' -newer "$o" 2>/dev/null | head -1)" ]; then
+    if [ ! -f "$o" ] || [ "$s" -nt "$o" ] || [ VERSION -nt "$o" ] || [ -n "$(find qwz include controller airport itl80211 firmware -name '*.h*' -newer "$o" 2>/dev/null | head -1)" ]; then
       ( xcrun clang++ "${FLAGS[@]}" -c "$s" -o "$o" 2> "$o.log" || { echo "FAIL $s"; exit 1; } ) &
       pids+=($!)
       if [ ${#pids[@]} -ge 10 ]; then wait "${pids[0]}" || fail=1; pids=("${pids[@]:1}"); fi

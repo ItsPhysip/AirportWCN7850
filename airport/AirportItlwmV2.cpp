@@ -287,6 +287,17 @@ initCCLogs()
     return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter;
 }
 
+bool AirportItlwm::isCommandProhibited(int command)
+{
+    static uint8_t seen[1024 / 8];
+
+    if (command >= 0 && command < 1024 && !(seen[command / 8] & (1 << (command % 8)))) {
+        seen[command / 8] |= 1 << (command % 8);
+        qwz_log("airport: ioctl %d (%s) first asked of the driver\n", command, convertApple80211IOCTLToString(command));
+    }
+    return false;
+}
+
 bool AirportItlwm::start(IOService *provider)
 {
 #if __IO80211_TARGET == __MAC_15_2

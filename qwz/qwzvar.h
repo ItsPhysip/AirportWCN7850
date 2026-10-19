@@ -287,11 +287,10 @@ struct hal_rx_ops {
 	uint16_t (*rx_desc_get_mpdu_start_seq_no)(struct hal_rx_desc *desc);
 	bool (*rx_desc_get_mpdu_fc_valid)(struct hal_rx_desc *desc);
 	uint16_t (*rx_desc_get_msdu_len)(struct hal_rx_desc *desc);
-#ifdef notyet
 	uint8_t (*rx_desc_get_msdu_sgi)(struct hal_rx_desc *desc);
 	uint8_t (*rx_desc_get_msdu_rx_bw)(struct hal_rx_desc *desc);
-#endif
 	uint8_t (*rx_desc_get_msdu_rate_mcs)(struct hal_rx_desc *desc);
+	uint8_t (*rx_desc_get_msdu_rssi)(struct hal_rx_desc *desc);
 	uint32_t (*rx_desc_get_msdu_freq)(struct hal_rx_desc *desc);
 	uint8_t (*rx_desc_get_msdu_pkt_type)(struct hal_rx_desc *desc);
 	uint8_t (*rx_desc_get_msdu_nss)(struct hal_rx_desc *desc);
@@ -1859,6 +1858,11 @@ struct qwz_vif {
 	bool bcca_zero_sent;
 	bool do_not_send_tmpl;
 	struct ieee80211_channel *chan;
+#ifdef __APPLE__
+	/* Channel mode and centre the vdev was last (re)started with. */
+	uint32_t chan_mode;
+	uint32_t chan_cfreq1;
+#endif
 #if 0
 	struct ath12k_arp_ns_offload arp_ns_offload;
 	struct ath12k_rekey_data rekey_data;
@@ -2077,6 +2081,12 @@ struct qwz_softc {
 	uint32_t			cfg_rx_chainmask;
 	int				num_tx_chains;
 	int				num_rx_chains;
+	/* Last unicast data frame received (qwz_dp_rx_h_rate), for the link display. */
+	uint32_t			sc_rx_rate_kbps;
+	int				sc_rx_rate_mcs;	/* -1: legacy rate */
+	int				sc_rx_rate_nss;
+	int				sc_rx_rate_sgi;	/* 1: short guard interval */
+	int8_t				sc_rx_rssi;	/* dBm; 0 until the first frame */
 	int				num_created_vdevs;
 	int				num_started_vdevs;
 	uint32_t			allocated_vdev_map;
