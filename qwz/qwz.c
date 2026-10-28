@@ -107,6 +107,13 @@ uint32_t	qwz_debug = 0
 		;
 #endif
 
+/*
+ * Regulatory country to request from the firmware at radio start
+ * (ISO 3166 alpha2, e.g. "NZ"; empty keeps the firmware's default).
+ * Set from the qwz_cc boot-arg.
+ */
+char	qwz_cc[3];
+
 int qwz_ce_init_pipes(struct qwz_softc *);
 int qwz_hal_srng_create_config_wcn7850(struct qwz_softc *);
 int qwz_hal_srng_src_num_free(struct qwz_softc *, struct hal_srng *, int);
@@ -11407,8 +11414,10 @@ int
 qwz_reg_chan_list_event(struct qwz_softc *sc, struct mbuf *m,
     enum wmi_reg_chan_list_cmd_type id)
 {
+	struct ieee80211com *ic = &sc->sc_ic;
 	struct cur_regulatory_info *reg_info = NULL;
-	int ret = 0;
+	struct cur_reg_rule *rule;
+	int ret = 0, i;
 #if 0
 	struct ieee80211_regdomain *regd = NULL;
 	bool intersect = false;
@@ -11441,13 +11450,43 @@ qwz_reg_chan_list_event(struct qwz_softc *sc, struct mbuf *m,
 		 * fw retains the current regd. We print a failure info
 		 * and return from here.
 		 */
-		printf("%s: Failed to set the requested Country "
-		    "regulatory setting\n", __func__);
-		qwz_init_channels_world(sc);
+		printf("%s: firmware refused country %c%c: status %d\n",
+		    sc->sc_dev.dv_xname, reg_info->alpha2[0],
+		    reg_info->alpha2[1], reg_info->status_code);
+		/* After a refused request, keep the list we already have. */
+		if (sc->reg_cc_updates == 0)
+			qwz_init_channels_world(sc);
+		sc->reg_cc_updates++;
+		wakeup(&sc->reg_cc_updates);
 		goto mem_free;
 	}
 
-	qwz_init_channels(sc, reg_info);
+	printf("%s: regulatory domain %c%c (dfs region %u, %u 2GHz and "
+	    "%u 5GHz rules)\n", sc->sc_dev.dv_xname,
+	    reg_info->alpha2[0], reg_info->alpha2[1], reg_info->dfs_region,
+	    reg_info->num_2ghz_reg_rules, reg_info->num_5ghz_reg_rules);
+	for (i = 0; i < reg_info->num_2ghz_reg_rules; i++) {
+		rule = &reg_info->reg_rules_2ghz_ptr[i];
+		printf("%s:   %u-%u MHz max %u dBm\n", sc->sc_dev.dv_xname,
+		    rule->start_freq, rule->end_freq, rule->reg_power);
+	}
+	for (i = 0; i < reg_info->num_5ghz_reg_rules; i++) {
+		rule = &reg_info->reg_rules_5ghz_ptr[i];
+		printf("%s:   %u-%u MHz max %u dBm\n", sc->sc_dev.dv_xname,
+		    rule->start_freq, rule->end_freq, rule->reg_power);
+	}
+
+	if (sc->reg_cc_updates > 0) {
+		/* A later update replaces the channel list, not adds to it. */
+		memset(ic->ic_channels, 0, sizeof(ic->ic_channels));
+		qwz_init_channels(sc, reg_info);
+		ieee80211_channel_init(&ic->ic_if);
+	} else
+		qwz_init_channels(sc, reg_info);
+	memcpy(sc->reg_alpha2, reg_info->alpha2, 2);
+	sc->reg_alpha2[2] = '\0';
+	sc->reg_cc_updates++;
+	wakeup(&sc->reg_cc_updates);
 #if 0
 	pdev_idx = reg_info->phy_id;
 
@@ -17266,6 +17305,47 @@ qwz_wmi_send_dfs_phyerr_offload_enable_cmd(struct qwz_softc *sc, uint32_t pdev_i
 }
 
 int
+qwz_wmi_send_set_current_country_cmd(struct qwz_softc *sc, uint32_t pdev_id,
+    const char *alpha2)
+{
+	struct qwz_pdev_wmi *wmi = &sc->wmi.wmi[pdev_id];
+	struct wmi_set_current_country_cmd *cmd;
+	struct mbuf *m;
+	int ret;
+
+	m = qwz_wmi_alloc_mbuf(sizeof(*cmd));
+	if (!m)
+		return ENOMEM;
+
+	cmd = (struct wmi_set_current_country_cmd *)(mtod(m, uint8_t *) +
+	    sizeof(struct ath12k_htc_hdr) + sizeof(struct wmi_cmd_hdr));
+
+	cmd->tlv_header = FIELD_PREP(WMI_TLV_TAG,
+	    WMI_TAG_SET_CURRENT_COUNTRY_CMD) |
+	    FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
+
+	cmd->pdev_id = pdev_id;
+	cmd->new_alpha2 = 0;
+	memcpy(&cmd->new_alpha2, alpha2, 2);
+
+	ret = qwz_wmi_cmd_send(wmi, m, WMI_SET_CURRENT_COUNTRY_CMDID);
+	if (ret) {
+		if (ret != ESHUTDOWN) {
+			printf("%s: failed to send "
+			    "WMI_SET_CURRENT_COUNTRY cmd\n",
+			    sc->sc_dev.dv_xname);
+		}
+		m_free(m);
+		return ret;
+	}
+
+	DNPRINTF(QWZ_D_WMI, "%s: cmd set current country pdev id %d "
+	    "alpha2 %c%c\n", __func__, pdev_id, alpha2[0], alpha2[1]);
+
+	return 0;
+}
+
+int
 qwz_wmi_send_scan_chan_list_cmd(struct qwz_softc *sc, uint8_t pdev_id,
     struct scan_chan_list_params *chan_list)
 {
@@ -22160,6 +22240,32 @@ qwz_mac_op_start(struct qwz_pdev *pdev)
 	qwz_mac_setup_ht_vht_cap(sc, pdev);	/* macOS: 11ac */
 
 	/* TODO: Do we need to enable ANI? */
+
+	/*
+	 * Ask for the configured country, as ath12k does at radio start.
+	 * The firmware answers with a new regulatory channel list event;
+	 * wait for it so the channel list sent below already follows it.
+	 */
+	if (qwz_cc[0] != '\0' && strncmp(sc->reg_alpha2, qwz_cc, 2) != 0) {
+		int updates = sc->reg_cc_updates;
+
+		ret = qwz_wmi_send_set_current_country_cmd(sc, pdev->pdev_id,
+		    qwz_cc);
+		if (ret) {
+			printf("%s: failed to set country %s: %d\n",
+			    sc->sc_dev.dv_xname, qwz_cc, ret);
+		} else {
+			while (sc->reg_cc_updates == updates) {
+				if (tsleep_nsec(&sc->reg_cc_updates, 0,
+				    "qwzcc", SEC_TO_NSEC(2))) {
+					printf("%s: no regulatory update after "
+					    "setting country %s\n",
+					    sc->sc_dev.dv_xname, qwz_cc);
+					break;
+				}
+			}
+		}
+	}
 
 	ret = qwz_reg_update_chan_list(sc, pdev->pdev_id);
 	if (ret) {

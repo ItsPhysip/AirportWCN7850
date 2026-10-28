@@ -133,6 +133,15 @@ ItlQwz::attach(IOPCIDevice *device)
 	PE_parse_boot_argn("qwz_debug", &qwz_debug, sizeof(qwz_debug));
 	QWZLOG("debug build, qwz_debug=0x%x", qwz_debug);
 #endif
+	/* qwz_cc=<alpha2> asks the firmware for that regulatory country. */
+	if (PE_parse_boot_argn("qwz_cc", qwz_cc, sizeof(qwz_cc)) &&
+	    strlen(qwz_cc) == 2) {
+		for (int i = 0; i < 2; i++)
+			if (qwz_cc[i] >= 'a' && qwz_cc[i] <= 'z')
+				qwz_cc[i] -= 'a' - 'A';
+		QWZLOG("requesting country %s", qwz_cc);
+	} else
+		qwz_cc[0] = '\0';
 	if (qwz_stage_parked()) {
 		QWZLOG("parked by an earlier attempt; reboot before starting again");
 		return false;
@@ -381,7 +390,11 @@ ItlQwz::supportedFeatures()
 const char *
 ItlQwz::getFirmwareCountryCode()
 {
-	return "ZZ";
+	/* "00" is the firmware's world domain; report it as unset. */
+	if (sc == NULL || sc->reg_alpha2[0] == '\0' ||
+	    strcmp(sc->reg_alpha2, "00") == 0)
+		return "ZZ";
+	return sc->reg_alpha2;
 }
 
 uint32_t

@@ -51,6 +51,8 @@ extern uint32_t	qwz_debug;
 #define DNPRINTF(n,x...)
 #endif
 
+extern char	qwz_cc[3];
+
 struct qwz_softc;
 
 #define ATH12K_EXT_IRQ_GRP_NUM_MAX 11
@@ -2010,6 +2012,8 @@ struct qwz_softc {
 	int setkey_nkeys;
 
 	int install_key_done;
+	int reg_cc_updates;		/* regulatory channel list events seen */
+	char reg_alpha2[3];		/* country of the last one */
 	int install_key_status;
 
 	/* Task for firmware BlockAck setup/teardown and its arguments. */
