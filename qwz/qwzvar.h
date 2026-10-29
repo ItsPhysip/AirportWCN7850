@@ -452,6 +452,8 @@ enum ath12k_spectral_mode {
 	ATH12K_SPECTRAL_MANUAL,
 };
 
+/* ath12k's channel max_power in dBm (mac.c CHAN2G/CHAN5G). */
+#define QWZ_MAX_TX_POWER		30
 #define QWZ_SCAN_11D_INTERVAL		600000
 #define QWZ_11D_INVALID_VDEV_ID		0xFFFF
 

@@ -1226,6 +1226,17 @@ qwz_newstate_task(void *arg)
 		return;
 	}
 
+	if (nstate != ostate) {
+		char des[18];
+		strlcpy(des, ether_sprintf(ic->ic_des_bssid), sizeof(des));
+		printf("%s: %s -> %s chan %d rssi %d bss %s want %s\n",
+		    sc->sc_dev.dv_xname,
+		    ieee80211_state_name[ostate], ieee80211_state_name[nstate],
+		    ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan),
+		    (int8_t)ic->ic_bss->ni_rssi,
+		    ether_sprintf(ic->ic_bss->ni_bssid), des);
+	}
+
 	if (ostate == IEEE80211_S_SCAN) {
 		if (nstate == ostate) {
 			if (sc->scan.state != ATH12K_SCAN_IDLE) {
@@ -21993,7 +22004,7 @@ qwz_reg_update_chan_list(struct qwz_softc *sc, uint8_t pdev_id)
 		    channel->ic_flags);
 		ch->cfreq1 = ch->mhz;
 		ch->minpower = 0;
-		ch->maxpower = 40; /* XXX from Linux debug trace */
+		ch->maxpower = QWZ_MAX_TX_POWER * 2;	/* half dBm */
 		ch->maxregpower = ch->maxpower;
 		ch->antennamax = 0;
 
@@ -22753,8 +22764,16 @@ qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
 	qwz_mac_vdev_chan_args(sc, ic->ic_bss, &arg);
 
 	arg.channel.min_power = 0;
-	arg.channel.max_power = 20; /* XXX */
-	arg.channel.max_reg_power = 20; /* XXX */
+	/*
+	 * Whole dBm here (ath12k passes chan->max_power as is; only the
+	 * scan channel list is in half dBm). Give the hardware maximum; the
+	 * firmware still applies its own regulatory and board limits.
+	 */
+	arg.channel.max_power = QWZ_MAX_TX_POWER;
+	arg.channel.max_reg_power = arg.channel.max_power;
+	printf("%s: vdev %d channel %d max power %u dBm\n",
+	    sc->sc_dev.dv_xname, arvif->vdev_id,
+	    ieee80211_chan2ieee(ic, chan), arg.channel.max_power);
 	arg.channel.max_antenna_gain = 0; /* XXX */
 
 	arg.pref_tx_streams = sc->num_tx_chains;
