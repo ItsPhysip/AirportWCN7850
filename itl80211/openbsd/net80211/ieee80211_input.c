@@ -2165,7 +2165,7 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
          */
         if (isprobe || ni->ni_rssi == 0)
             ni->ni_rssi = rxi->rxi_rssi;
-        else if (ni->ni_rssi < rxi->rxi_rssi)
+        else if ((int8_t)ni->ni_rssi < rxi->rxi_rssi)	/* dBm */
             ni->ni_rssi = rxi->rxi_rssi;
     } else
         ni->ni_rssi = rxi->rxi_rssi;

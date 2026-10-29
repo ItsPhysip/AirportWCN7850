@@ -12097,6 +12097,46 @@ qwz_pull_mgmt_rx_params_tlv(struct qwz_softc *sc, struct mbuf *m,
 	return 0;
 }
 
+/*
+ * A 5 GHz beacon can arrive on a channel other than the one its DS or
+ * HT operation element names (seen from an AP left on 36 after a move
+ * to 149), and net80211 then drops it as a mismatch. Like cfg80211,
+ * trust the channel the beacon itself carries.
+ */
+void
+qwz_mgmt_rx_fix_chan(struct qwz_softc *sc, struct mbuf *m,
+    struct ieee80211_rxinfo *rxi)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211_frame *wh = mtod(m, struct ieee80211_frame *);
+	uint8_t subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
+	uint8_t *frm, *efrm, chan = 0;
+
+	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) !=
+	    IEEE80211_FC0_TYPE_MGT ||
+	    (subtype != IEEE80211_FC0_SUBTYPE_BEACON &&
+	    subtype != IEEE80211_FC0_SUBTYPE_PROBE_RESP))
+		return;
+	if (rxi->rxi_chan < 36)
+		return;	/* 2 GHz channels overlap; leakage is real there */
+
+	/* Skip timestamp, beacon interval and capabilities. */
+	frm = (uint8_t *)(wh + 1) + 12;
+	efrm = mtod(m, uint8_t *) + M_PKTLEN(m);
+	while (frm + 2 <= efrm && frm + 2 + frm[1] <= efrm) {
+		if (frm[0] == IEEE80211_ELEMID_DSPARMS && frm[1] >= 1) {
+			chan = frm[2];
+			break;
+		}
+		if (frm[0] == IEEE80211_ELEMID_HTOP && frm[1] >= 1)
+			chan = frm[2];
+		frm += 2 + frm[1];
+	}
+	if (chan >= 36 && chan <= IEEE80211_CHAN_MAX &&
+	    ic->ic_channels[chan].ic_flags != 0)
+		rxi->rxi_chan = chan;
+}
+
 void
 qwz_mgmt_rx_event(struct qwz_softc *sc, struct mbuf *m)
 {
@@ -12142,16 +12182,19 @@ qwz_mgmt_rx_event(struct qwz_softc *sc, struct mbuf *m)
 	}
 
 	rxi.rxi_chan = rx_ev.channel;
+	/*
+	 * Despite DB2DBM support, WCN7850 reports the offset from the
+	 * noise floor here (58 for a -37 dBm beacon), so convert.
+	 */
 	rxi.rxi_rssi = (int8_t)rx_ev.snr;
-	/* Firmware with DB2DBM conversion reports dBm already. */
-	if (!isset(sc->wmi.svc_map,
-	    WMI_TLV_SERVICE_HW_DB2DBM_CONVERSION_SUPPORT))
+	if (rxi.rxi_rssi > 0)
 		rxi.rxi_rssi += ATH12K_DEFAULT_NOISE_FLOOR;
 #if 0
 	status->rate_idx = ath12k_mac_bitrate_to_idx(sband, rx_ev.rate / 100);
 #endif
 
 	wh = mtod(m, struct ieee80211_frame *);
+	qwz_mgmt_rx_fix_chan(sc, m, &rxi);
 	ni = ieee80211_find_rxnode(ic, wh);
 #if 0
 	/* In case of PMF, FW delivers decrypted frames with Protected Bit set.
@@ -15510,8 +15553,12 @@ qwz_dp_rx_h_rate(struct qwz_softc *sc, struct hal_rx_desc *rx_desc,
 	rssi = sc->hal_rx_ops->rx_desc_get_msdu_rssi(rx_desc);
 	if (rssi != 0) {
 		rssi_dbm = (int8_t)rssi;
-		if (!isset(sc->wmi.svc_map,
-		    WMI_TLV_SERVICE_HW_DB2DBM_CONVERSION_SUPPORT))
+		/*
+		 * The descriptor's RSSI is relative to the noise floor even
+		 * when the firmware converts WMI values to dBm: WCN7850
+		 * reports 58 here while ack RSSI says -36 dBm.
+		 */
+		if (rssi_dbm > 0)
 			rssi_dbm += ATH12K_DEFAULT_NOISE_FLOOR;
 		sc->sc_rx_rssi = rssi_dbm;
 	}
