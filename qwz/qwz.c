@@ -12128,7 +12128,11 @@ qwz_mgmt_rx_event(struct qwz_softc *sc, struct mbuf *m)
 	}
 
 	rxi.rxi_chan = rx_ev.channel;
-	rxi.rxi_rssi = rx_ev.snr + ATH12K_DEFAULT_NOISE_FLOOR;
+	rxi.rxi_rssi = (int8_t)rx_ev.snr;
+	/* Firmware with DB2DBM conversion reports dBm already. */
+	if (!isset(sc->wmi.svc_map,
+	    WMI_TLV_SERVICE_HW_DB2DBM_CONVERSION_SUPPORT))
+		rxi.rxi_rssi += ATH12K_DEFAULT_NOISE_FLOOR;
 #if 0
 	status->rate_idx = ath12k_mac_bitrate_to_idx(sband, rx_ev.rate / 100);
 #endif
