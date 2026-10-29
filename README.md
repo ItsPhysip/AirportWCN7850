@@ -1,48 +1,30 @@
 # AirportWCN7850
 
-Native Wi-Fi for the **Qualcomm WCN7850** (FastConnect 7800, the NCM865 module) on macOS: the macOS Wi-Fi menu and settings, driven by a port of OpenBSD's [`qwz(4)`](https://man.openbsd.org/qwz.4) driver on the [itlwm](https://github.com/OpenIntelWireless/itlwm) 802.11 stack. macOS 26 only, no OCLP.
+Fork of the [razvanccr/AirportWCN7850](https://github.com/razvanccr/AirportWCN7850) macOS Wi-Fi driver for the Qualcomm WCN7850 that fixes tx power, country code, and signal strength reading. Tested and works on my Gigabyte X870E AORUS MASTER with macOS 26.7.2 and OpenCore. Most of the driver is upstream's work, so check their README for what it supports.
 
-The Bluetooth half of the chip is a separate project: [BluetoothWCN7850](https://github.com/razvanccr/BluetoothWCN7850).
+Results in 280 Mbit/s down and 200 up through a UniFi AC-LR on channel 149, compared to a 130 Mbit/s link at -73 dBm before, when macOS couldn't read signal strength and kept joining a further away access point or failing outright to connect. YMMV.
 
-**Tested on:** MSI MAG X870 Tomahawk WiFi (onboard WCN7850), macOS 26.7.1 Tahoe, OpenCore. Scans, joins WPA2 networks, DHCP, 802.11ac (VHT80, 2 spatial streams), auto-connect at boot, private Wi-Fi addresses. `wdutil info` shows the real RSSI, noise, rate, MCS and NSS.
+## Fixed/Changed
 
-## Download
-
-[release/AirportWCN7850-0.0.2.zip](release/AirportWCN7850-0.0.2.zip): the kext with the firmware embedded, nothing else is needed. Changes in [release/notes-0.0.2.md](release/notes-0.0.2.md).
-
-## Install
-
-1. Copy `AirportWCN7850.kext` to `EFI/OC/Kexts` and add it to `Kernel → Add` with `MinKernel` 25.0.0.
-2. Not alongside itlwm or AirportItlwm; disable an `SSDT-Disable_Network_GPP7` if your config hides the card.
-3. Reboot and join a network from the Wi-Fi menu.
-
-`-qwzoff` in boot-args disables the driver, `-novht` falls back to 802.11n. For a first boot on unknown hardware read [Testing safely](docs/bring-up.md#testing-safely).
-
-## What does not work yet
-
-- WPA3/SAE, 802.1X without a supplicant; WPA1 and WEP use software crypto (this is what OpenBSD's `qwz(4)` supports).
-- 802.11ax/be, 160/320 MHz and MLO are not driven: the link is 802.11ac at up to 80 MHz, as in Linux ath12k without 160 MHz.
-- AirDrop/AWDL and the rest of Continuity (AWDL is not coming on this chip: [docs/awdl-feasibility.md](docs/awdl-feasibility.md)). Sleep/wake is not verified.
-- Broadcast and multicast are only received on open networks or WPA2 with a CCMP group cipher (ARP/IPv6 can fail on TKIP-group networks).
-
-How it works, the bring-up log, the debugging tools and the stage-by-stage bisection are in [docs/bring-up.md](docs/bring-up.md).
+- `qwz_cc=NZ` (or any two-letter country code) in boot-args sets the Wi-Fi country. Without it the card stays on the world domain, which caps every band at 20 dBm.
+- The tx power limit is 30 dBm instead of 20. The firmware still applies the country's limits on top.
+- Signal strength is in dBm. The card reports it relative to the noise floor, and macOS was seeing numbers like 118, so it picked the wrong access points.
+- On 5 GHz the driver takes a network's channel from its beacon, like Linux does.
+- `qwz_bdf=<variant>` picks the board calibration variant, and the driver logs which one it loaded.
+- Joins are logged (state, channel, signal and BSSID) in the driver's log: `ioreg -l -w0 -a -k QwzMacLog -r`.
 
 ## Building
 
-Command Line Tools, git, curl and python3:
+You need the Command Line Tools, git, curl and python3.
 
 ```bash
 scripts/fetch-firmware.sh && PRODUCT=AirportWCN7850 ./build.sh
 ```
 
-`build/AirportWCN7850.kext` is the result (`DEBUG=1` for the traced build). The firmware comes from linux-firmware (pinned release, checksums in `firmware/SHA256SUMS`), is embedded, and is not committed.
+The kext ends up in `build/AirportWCN7850.kext`. Put it in `EFI/OC/Kexts`, add it under `Kernel → Add` with `MinKernel` 25.0.0, and don't load itlwm or AirportItlwm alongside it. If your config has `SSDT-Disable_Network_GPP7`, disable it.
 
-## Licences and credits
+The firmware comes from linux-firmware and is embedded in the kext, not committed here.
 
-- `qwz/qwz.c`, `qwz/if_qwz_pci.c`, `qwz/qwzreg.h`, `qwz/qwzvar.h`: OpenBSD `qwz(4)` (Stefan Sperling and the OpenBSD developers), ISC, with code derived from the Linux `ath12k` driver under the Linux Foundation / Qualcomm BSD licence.
-- `itl80211/`, `include/`, `controller/` (except `ItlQwz.*`): itlwm by zxystd, GPL-2.0-or-later, with OpenBSD net80211 under its BSD/ISC licences. `airport/`: the AirportItlwm "WCL" layer by laobamac, as reshaped by [SimpleMtkWlan](https://github.com/pengubow/SimpleMtkWlan).
-- `qwz/qwz_compat.*`, `controller/ItlQwz.*`, `scripts/`: GPL-2.0-or-later.
-- WCN7850 firmware: Qualcomm, redistributable in binary form under `LICENSE.QualcommAtheros_ath10k`.
-- Built with [MacKernelSDK](https://github.com/acidanthera/MacKernelSDK).
+## Licence
 
-The whole kext is distributed under GPL-2.0-or-later (`LICENSE`).
+GPL-2.0-or-later, see `LICENSE`. The qwz code is from OpenBSD (ISC) and Linux ath12k, and the 802.11 stack is from itlwm. Upstream's README has the full credits.
