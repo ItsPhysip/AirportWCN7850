@@ -142,6 +142,12 @@ ItlQwz::attach(IOPCIDevice *device)
 		QWZLOG("requesting country %s", qwz_cc);
 	} else
 		qwz_cc[0] = '\0';
+	/* qwz_bdf=<variant> picks a board-2.bin calibration variant. */
+	if (PE_parse_boot_argn("qwz_bdf", qwz_bdf, sizeof(qwz_bdf)) &&
+	    qwz_bdf[0] != '\0')
+		QWZLOG("board data variant %s", qwz_bdf);
+	else
+		qwz_bdf[0] = '\0';
 	if (qwz_stage_parked()) {
 		QWZLOG("parked by an earlier attempt; reboot before starting again");
 		return false;

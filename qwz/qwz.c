@@ -114,6 +114,13 @@ uint32_t	qwz_debug = 0
  */
 char	qwz_cc[3];
 
+/*
+ * Board data variant (the ",variant=" part of a board-2.bin name).
+ * Linux reads it from SMBIOS; macOS sees OpenCore's tables instead,
+ * so it comes from the qwz_bdf boot-arg.
+ */
+char	qwz_bdf[32];
+
 int qwz_ce_init_pipes(struct qwz_softc *);
 int qwz_hal_srng_create_config_wcn7850(struct qwz_softc *);
 int qwz_hal_srng_src_num_free(struct qwz_softc *, struct hal_srng *, int);
@@ -6597,7 +6604,10 @@ qwz_loadfirmware(struct qwz_softc *sc, int type, const char *filename,
 int
 qwz_core_check_smbios(struct qwz_softc *sc)
 {
-	return 0; /* TODO */
+	if (qwz_bdf[0] != '\0')
+		strlcpy(sc->qmi_target.bdf_ext, qwz_bdf,
+		    sizeof(sc->qmi_target.bdf_ext));
+	return 0;
 }
 
 int
@@ -6951,6 +6961,8 @@ qwz_core_fetch_bdf(struct qwz_softc *sc, const u_char **boardfw,
 	ret = qwz_core_fetch_board_data_api_n(sc, boardfw, boardfw_len,
 	    data, len, boardname, ATH12K_BD_IE_BOARD,
 	    ATH12K_BD_IE_BOARD_NAME, ATH12K_BD_IE_BOARD_DATA);
+	printf("%s: board data '%s': %s (%lu bytes)\n", sc->sc_dev.dv_xname,
+	    boardname, ret ? "not found" : "loaded", (unsigned long)*boardfw_len);
 	if (!ret)
 		return 0;
 
@@ -6965,6 +6977,8 @@ qwz_core_fetch_bdf(struct qwz_softc *sc, const u_char **boardfw,
 	ret = qwz_core_fetch_board_data_api_n(sc, boardfw, boardfw_len,
 	    data, len, fallback_boardname, ATH12K_BD_IE_BOARD,
 	    ATH12K_BD_IE_BOARD_NAME, ATH12K_BD_IE_BOARD_DATA);
+	printf("%s: board data '%s': %s (%lu bytes)\n", sc->sc_dev.dv_xname,
+	    fallback_boardname, ret ? "not found" : "loaded", (unsigned long)*boardfw_len);
 	if (!ret)
 		return 0;
 

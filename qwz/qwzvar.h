@@ -52,6 +52,7 @@ extern uint32_t	qwz_debug;
 #endif
 
 extern char	qwz_cc[3];
+extern char	qwz_bdf[32];
 
 struct qwz_softc;
 
